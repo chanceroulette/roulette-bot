@@ -1,4 +1,3 @@
-
 import os
 import json
 import logging
@@ -10,7 +9,6 @@ rosso = {1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36}
 nero = {2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35}
 DATA_FILE = "sessione.json"
 
-# Stato globale
 BOXES = {}
 ACTIVE_CHANCES = []
 FIRST15 = []
@@ -78,9 +76,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if ACTIVE_CHANCES and BOXES:
         saldo = FICHES_VINTE - FICHES_PERSE
         await update.message.reply_text(
-            f"Hai una sessione attiva. Vuoi riprendere?
-Chances: {', '.join(ACTIVE_CHANCES)}
-Saldo attuale: {saldo} fiche",
+            f"Hai una sessione attiva. Vuoi riprendere?\nChances: {', '.join(ACTIVE_CHANCES)}\nSaldo attuale: {saldo} fiche",
             reply_markup=get_keyboard()
         )
         return
@@ -113,8 +109,7 @@ async def handle_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard.append([InlineKeyboardButton("✅ Conferma", callback_data="conferma_chances")])
             context.user_data["scelte"] = []
             await update.message.reply_text(
-                f"Ti consiglio di attivare: {', '.join(suggerite)}
-Seleziona le chances che vuoi attivare:",
+                f"Ti consiglio di attivare: {', '.join(suggerite)}\nSeleziona le chances che vuoi attivare:",
                 reply_markup=InlineKeyboardMarkup(keyboard)
             )
     else:
@@ -134,8 +129,7 @@ async def seleziona_chances(update: Update, context: ContextTypes.DEFAULT_TYPE):
             scelte.append(chance)
         context.user_data["scelte"] = scelte
         await query.edit_message_text(
-            f"Hai selezionato: {', '.join(scelte)}
-Premi ✅ Conferma per iniziare.",
+            f"Hai selezionato: {', '.join(scelte)}\nPremi ✅ Conferma per iniziare.",
             reply_markup=query.message.reply_markup
         )
     elif data == "conferma_chances":
@@ -149,8 +143,7 @@ Premi ✅ Conferma per iniziare.",
 
 async def inserisci_giocata(update: Update, context: ContextTypes.DEFAULT_TYPE, numero: int):
     global BOXES, FICHES_PERSE, FICHES_VINTE
-    messaggio = f"Numero inserito: {numero}
-"
+    messaggio = f"Numero inserito: {numero}\n"
     fiches_giro_vinte = 0
     fiches_giro_perse = 0
     prossima_puntata = []
@@ -165,8 +158,7 @@ async def inserisci_giocata(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
         if is_win(chance, numero):
             fiches_giro_vinte += puntata
-            messaggio += f"{chance}: VINTO {puntata} fiche
-"
+            messaggio += f"{chance}: VINTO {puntata} fiche\n"
             if len(box) >= 2:
                 box.pop()
                 box.pop(0)
@@ -175,8 +167,7 @@ async def inserisci_giocata(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         else:
             fiches_giro_perse += puntata
             box.append(puntata)
-            messaggio += f"{chance}: PERSO {puntata} fiche
-"
+            messaggio += f"{chance}: PERSO {puntata} fiche\n"
 
         if not box:
             BOXES[chance] = [1, 1, 1, 1]
@@ -187,15 +178,9 @@ async def inserisci_giocata(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     FICHES_VINTE += fiches_giro_vinte
     FICHES_PERSE += fiches_giro_perse
     saldo = FICHES_VINTE - FICHES_PERSE
-    messaggio += f"
-🎯 Giro: vinte {fiches_giro_vinte} fiche, perse {fiches_giro_perse} fiche"
-    messaggio += f"
-📊 Totale: vinte {FICHES_VINTE}, perse {FICHES_PERSE} → saldo: {saldo:+}"
-    messaggio += f"
-
-🎯 Prossima puntata:
-" + "
-".join(prossima_puntata)
+    messaggio += f"\n🎯 Giro: vinte {fiches_giro_vinte} fiche, perse {fiches_giro_perse} fiche"
+    messaggio += f"\n📊 Totale: vinte {FICHES_VINTE}, perse {FICHES_PERSE} → saldo: {saldo:+}"
+    messaggio += f"\n\n🎯 Prossima puntata:\n" + "\n".join(prossima_puntata)
 
     await update.message.reply_text(messaggio)
     salva_sessione()
