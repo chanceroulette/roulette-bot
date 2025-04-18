@@ -11,7 +11,7 @@ LAST_NUMBERS = []
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Calcolo vincita
+# Funzione per verificare se una chance ha vinto
 def is_win(chance, number):
     if number == 0:
         return False
@@ -51,19 +51,21 @@ async def inserisci(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for chance in CHANCES:
         box = BOXES[chance]
         if not box:
-            BOXES[chance] = [1,1,1,1]
+            BOXES[chance] = [1, 1, 1, 1]
             box = BOXES[chance]
         puntata = box[0] + box[-1] if len(box) >= 2 else box[0] * 2
+
         if is_win(chance, numero):
             messaggio += f"✅ {chance}: VINTO - Punta {puntata} fiche → rimuovi prima e ultima casella.\n"
-            if len(box) >= 2:
-                box.pop(0)
+            try:
                 box.pop(-1)
-            else:
+                box.pop(0)
+            except IndexError:
                 box.clear()
         else:
             messaggio += f"❌ {chance}: PERSO - Punta {puntata} fiche → aggiungi in fondo.\n"
             box.append(puntata)
+
     await update.message.reply_text(messaggio)
 
 # Comando /box
