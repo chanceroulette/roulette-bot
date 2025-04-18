@@ -1,142 +1,139 @@
 import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+import os
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ContextTypes, filters
+)
 
+# Colori roulette
+rosso = {1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36}
+nero = {2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35}
+
+# Configurazione
 CHANCES = ["Rosso", "Nero", "Pari", "Dispari", "Manque", "Passe"]
-BOXES = {chance: [1, 1, 1, 1] for chance in CHANCES}
-LAST_NUMBERS = []
+BOXES = {chance: [1,1,1,1] for chance in CHANCES}
 ACTIVE_CHANCES = CHANCES.copy()
+LAST_NUMBERS = []
+FICHES_VINTE = 0
+FICHES_PERSE = 0
+STOP_LOSS = None
+STOP_WIN = None
+TETTO_MAX = 9999
+VALORE_FICHE = 1
+MODALITA_INSERIMENTO = False
+HISTORY_BOXES = []
 
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Funzione vincita
 def is_win(chance, number):
     if number == 0:
         return False
-    if chance == "Rosso":
-        return number in {1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36}
-    if chance == "Nero":
-        return number in {2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35}
-    if chance == "Pari":
-        return number % 2 == 0
-    if chance == "Dispari":
-        return number % 2 != 0
-    if chance == "Manque":
-        return 1 <= number <= 18
-    if chance == "Passe":
-        return 19 <= number <= 36
+    if chance == "Rosso": return number in rosso
+    if chance == "Nero": return number in nero
+    if chance == "Pari": return number % 2 == 0
+    if chance == "Dispari": return number % 2 != 0
+    if chance == "Manque": return 1 <= number <= 18
+    if chance == "Passe": return 19 <= number <= 36
     return False
 
+# Tastiera colorata roulette
+def get_keyboard():
+    layout = []
+    row = []
+    for i in range(1, 37):
+        color = "🔴" if i in rosso else "⚫"
+        row.append(KeyboardButton(f"{color} {i}"))
+        if len(row) == 12:
+            layout.append(row)
+            row = []
+    layout.append([KeyboardButton("🟢 0")])
+    return ReplyKeyboardMarkup(layout, resize_keyboard=True, one_time_keyboard=False)
+
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Benvenuto nel tuo BOT Roulette Box!\n\n"
-        "Digita /menu per visualizzare tutti i comandi disponibili."
-    )
+    await update.message.reply_text("Benvenuto! Scrivi /modalita_inserimento per attivare la tastiera.", reply_markup=get_keyboard())
 
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "**COMANDI DISPONIBILI:**\n\n"
-        "/start – Avvia il bot\n"
-        "/menu – Mostra questo menù\n"
-        "/inserisci <numero> – Inserisci l'ultimo numero uscito (es: /inserisci 27)\n"
-        "/ultimi15 <numeri> – Inserisci le ultime 15 estrazioni per ricevere un consiglio su quali chances attivare (es: /ultimi15 3 5 17 12 ...)\n"
-        "/attiva <chances> – Attiva solo alcune chances (es: /attiva Rosso Pari Passe)\n"
-        "/box – Mostra i box attualmente attivi\n"
-        "/reset – Reimposta tutti i box a [1,1,1,1] e riattiva tutte le chances\n"
-    )
+# /modalita_inserimento
+async def modalita_inserimento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global MODALITA_INSERIMENTO
+    MODALITA_INSERIMENTO = True
+    await update.message.reply_text("Modalità inserimento attiva. Tocca i numeri per registrarli.", reply_markup=get_keyboard())
 
-async def inserisci(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not context.args:
-        await update.message.reply_text("Inserisci l'ultimo numero uscito (es: /inserisci 27)")
-        return
-    try:
-        numero = int(context.args[0])
-        if numero < 0 or numero > 36:
-            raise ValueError
-    except ValueError:
-        await update.message.reply_text("Inserisci un numero valido tra 0 e 36.")
+# /stop
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global MODALITA_INSERIMENTO
+    MODALITA_INSERIMENTO = False
+    await update.message.reply_text("Modalità inserimento disattivata.")
+
+# Messaggi numerici
+async def inserisci_numero(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global FICHES_PERSE, FICHES_VINTE, LAST_NUMBERS, BOXES, HISTORY_BOXES
+
+    if not MODALITA_INSERIMENTO:
         return
 
+    testo = update.message.text.strip().replace("🔴", "").replace("⚫", "").replace("🟢", "").strip()
+    if not testo.isdigit():
+        return
+    numero = int(testo)
     LAST_NUMBERS.append(numero)
-    messaggio = f"Numero inserito: {numero}\n\n"
+    HISTORY_BOXES.append({k: v.copy() for k, v in BOXES.items()})
+
+    messaggio = f"Numero inserito: {numero}\n"
+    fiches_giro_vinte = 0
+    fiches_giro_perse = 0
+
     for chance in ACTIVE_CHANCES:
         box = BOXES[chance]
         if not box:
-            BOXES[chance] = [1, 1, 1, 1]
+            BOXES[chance] = [1,1,1,1]
             box = BOXES[chance]
-        puntata = box[0] + box[-1] if len(box) >= 2 else box[0] * 2
+        puntata = box[0] + box[-1] if len(box) >= 2 else box[0]*2
+
+        if puntata > TETTO_MAX:
+            messaggio += f"⚠️ {chance}: richiesta {puntata} fiche – supera limite {TETTO_MAX}. Salto.\n"
+            continue
+
         if is_win(chance, numero):
-            messaggio += f"✅ {chance}: VINTO – Punta {puntata} fiche (prima + ultima casella) → rimuovi\n"
+            fiches_giro_vinte += puntata
+            messaggio += f"✅ {chance}: VINTO – {puntata} fiche → rimuovo estremi\n"
             try:
                 box.pop(-1)
                 box.pop(0)
             except IndexError:
                 box.clear()
         else:
-            messaggio += f"❌ {chance}: PERSO – Punta {puntata} fiche (prima + ultima casella) → aggiungi in fondo\n"
+            fiches_giro_perse += puntata
             box.append(puntata)
+            messaggio += f"❌ {chance}: PERSO – {puntata} fiche → aggiunto in fondo\n"
+
+    FICHES_VINTE += fiches_giro_vinte
+    FICHES_PERSE += fiches_giro_perse
+    saldo = FICHES_VINTE - FICHES_PERSE
+    messaggio += f"\n🎯 Giro: vinte {fiches_giro_vinte}, perse {fiches_giro_perse} – saldo totale: {saldo} fiches\n"
+
+    if STOP_LOSS and FICHES_PERSE >= STOP_LOSS:
+        MODALITA_INSERIMENTO = False
+        messaggio += "\n❌ STOP LOSS raggiunto. Sessione bloccata."
+
+    if STOP_WIN and FICHES_VINTE >= STOP_WIN:
+        MODALITA_INSERIMENTO = False
+        messaggio += "\n✅ STOP WIN raggiunto. Sessione bloccata."
 
     await update.message.reply_text(messaggio)
 
-async def box(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    testo = "Box attivi:\n"
-    for chance in ACTIVE_CHANCES:
-        testo += f"{chance}: {BOXES[chance]}\n"
-    await update.message.reply_text(testo)
-
-async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    for chance in CHANCES:
-        BOXES[chance] = [1, 1, 1, 1]
-    global ACTIVE_CHANCES
-    ACTIVE_CHANCES = CHANCES.copy()
-    await update.message.reply_text("Tutti i box sono stati reimpostati a [1,1,1,1] e tutte le chances sono attive.")
-
-async def ultimi15(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if len(context.args) != 15:
-        await update.message.reply_text("Inserisci esattamente 15 numeri separati da spazio (es: /ultimi15 3 5 17 12 ...)")
-        return
-    try:
-        numeri = [int(n) for n in context.args]
-    except ValueError:
-        await update.message.reply_text("Assicurati che tutti i valori siano numeri interi.")
-        return
-
-    frequenze = {chance: 0 for chance in CHANCES}
-    for n in numeri:
-        for chance in CHANCES:
-            if is_win(chance, n):
-                frequenze[chance] += 1
-
-    sorted_chances = sorted(frequenze.items(), key=lambda x: x[1])
-    suggerite = [c for c, f in sorted_chances[:3]]
-
-    suggerimento = "Sulla base delle ultime 15 estrazioni, ti consiglio di attivare:\n"
-    for c in suggerite:
-        suggerimento += f"– {c} ({frequenze[c]} volte)\n"
-    suggerimento += "\nPer attivarle, usa:\n/attiva " + " ".join(suggerite)
-
-    await update.message.reply_text(suggerimento)
-
-async def attiva(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global ACTIVE_CHANCES
-    scelte = [s.capitalize() for s in context.args if s.capitalize() in CHANCES]
-    if not scelte:
-        await update.message.reply_text("Devi indicare almeno una chance valida (es: /attiva Rosso Pari Passe)")
-        return
-    ACTIVE_CHANCES = scelte
-    await update.message.reply_text(f"Chances attive ora: {', '.join(ACTIVE_CHANCES)}")
-
+# Avvio bot
 def main():
-    import os
     token = os.getenv("TELEGRAM_TOKEN")
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("menu", menu))
-    app.add_handler(CommandHandler("inserisci", inserisci))
-    app.add_handler(CommandHandler("box", box))
-    app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(CommandHandler("ultimi15", ultimi15))
-    app.add_handler(CommandHandler("attiva", attiva))
+    app.add_handler(CommandHandler("modalita_inserimento", modalita_inserimento))
+    app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), inserisci_numero))
     app.run_polling()
 
 if __name__ == "__main__":
