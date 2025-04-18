@@ -1,6 +1,5 @@
 import os
 import json
-import logging
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 
@@ -72,6 +71,7 @@ def suggest_chances(numbers):
     return [c[0] for c in sorted_chances[:3]]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global FIRST15, ACTIVE_CHANCES, BOXES, MODALITA_INSERIMENTO, FICHES_PERSE, FICHES_VINTE
     carica_sessione()
     if ACTIVE_CHANCES and BOXES:
         saldo = FICHES_VINTE - FICHES_PERSE
@@ -80,7 +80,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=get_keyboard()
         )
         return
-    global FIRST15, ACTIVE_CHANCES, BOXES, MODALITA_INSERIMENTO, FICHES_PERSE, FICHES_VINTE
+
     FIRST15.clear()
     ACTIVE_CHANCES.clear()
     BOXES.clear()
