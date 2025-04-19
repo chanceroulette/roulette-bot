@@ -1,89 +1,97 @@
-from collections import defaultdict, deque
+def build_session_report(session_data):
+    report = "Numeri usciti:\n"
+    numeri = session_data.get("numeri", [])
+    if not numeri:
+        report += "Nessun numero inserito."
+        return report
 
-CHANCES = {
-    "rosso": [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36],
-    "nero": [2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35],
-    "pari": [2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36],
-    "dispari": [1,3,5,7,9,11,13,15,17,19,21,23,25,27,29,31,33,35],
-    "manque": list(range(1, 19)),
-    "passe": list(range(19, 37))
-}
+    report += ", ".join(str(n) for n in numeri)
 
-class StrategyManager:
-    def __init__(self):
-        self.box = defaultdict(list)  # uno per ogni chance attiva
-        self.storico = []
-        self.primi_15 = []
-        self.saldo = 0
+    saldo = session_data.get("saldo", 0)
+    report += f"\n\nSaldo totale: {saldo} fiche"
 
-    def reset(self):
-        self.box = defaultdict(list)
-        self.storico = []
-        self.primi_15 = []
-        self.saldo = 0
+    return report
 
-    def annulla_ultimo(self):
-        if self.storico:
-            self.storico.pop()
-        for chance in self.box:
-            if self.box[chance]:
-                self.box[chance].pop()
 
-    def genera_report(self, numero, chances_attive):
-        report = []
-        self.storico.append(numero)
-        totale = 0
+def suggerisci_chances(numeri):
+    if len(numeri) < 15:
+        return []
 
-        for chance in chances_attive:
-            vincente = numero in CHANCES[chance]
-            box = self.box[chance]
+    stats = {
+        "rosso": 0,
+        "nero": 0,
+        "pari": 0,
+        "dispari": 0,
+        "manque": 0,  # 1–18
+        "passe": 0,   # 19–36
+    }
 
-            # se il box è vuoto, ricrealo da 1 a 4
-            if not box:
-                box.extend([1, 2, 3, 4])
+    rosso = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
+    nero = [2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35]
 
-            puntata = box[0] + box[-1] if len(box) > 1 else box[0]
-            if vincente:
-                guadagno = puntata
-                report.append(f"{chance.capitalize()}: puntate {puntata} fiche → esito: +{guadagno}")
-                box = box[1:-1]  # rimuove prima e ultima
-            else:
-                perdita = puntata
-                report.append(f"{chance.capitalize()}: puntate {puntata} fiche → esito: -{perdita}")
-                box.append(puntata)
+    for n in numeri[-15:]:
+        if n in rosso:
+            stats["rosso"] += 1
+        if n in nero:
+            stats["nero"] += 1
+        if n % 2 == 0:
+            stats["pari"] += 1
+        else:
+            stats["dispari"] += 1
+        if 1 <= n <= 18:
+            stats["manque"] += 1
+        elif 19 <= n <= 36:
+            stats["passe"] += 1
 
-            self.box[chance] = box
-            totale += guadagno if vincente else -perdita
+    max_val = max(stats.values())
+    chances = [k for k, v in stats.items() if v == max_val]
 
-        self.saldo += totale
-        report.append(f"\nSaldo totale: {self.saldo} fiche")
-        return "\n".join(report)
+    return chances
 
-def get_chances_from_numbers(numeri):
-    conteggi = defaultdict(int)
-    for numero in numeri:
-        for chance, lista in CHANCES.items():
-            if numero in lista:
-                conteggi[chance] += 1
-    # ritorna le 3 chances più frequenti
-    scelte = sorted(conteggi.items(), key=lambda x: x[1], reverse=True)[:3]
-    return [c[0] for c in scelte]
 
-def should_suggest_change(storico, chances_attive):
-    if len(storico) < 20:
-        return None
+def calcola_esito(numero, chances_attive, box):
+    esiti = {}
+    fiches_totali = 0
+    fiches_vinte = 0
 
-    ultimi_15 = storico[-15:]
-    nuove = get_chances_from_numbers(ultimi_15)
+    rosso = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
+    nero = [2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35]
 
-    suggerimenti = []
-    for chance in nuove:
-        if chance not in chances_attive:
-            suggerimenti.append(f"Aggiungi {chance}")
     for chance in chances_attive:
-        if chance not in nuove:
-            suggerimenti.append(f"Valuta di rimuovere {chance}")
+        box_chance = box.get(chance, [1, 1, 1, 1])
+        if len(box_chance) < 2:
+            puntata = 1
+        else:
+            puntata = box_chance[0] + box_chance[-1]
 
-    if suggerimenti:
-        return ", ".join(suggerimenti)
-    return None
+        fiches_totali += puntata
+        vinta = False
+
+        if chance == "rosso" and numero in rosso:
+            vinta = True
+        elif chance == "nero" and numero in nero:
+            vinta = True
+        elif chance == "pari" and numero % 2 == 0:
+            vinta = True
+        elif chance == "dispari" and numero % 2 == 1:
+            vinta = True
+        elif chance == "manque" and 1 <= numero <= 18:
+            vinta = True
+        elif chance == "passe" and 19 <= numero <= 36:
+            vinta = True
+
+        if vinta:
+            esiti[chance] = f"+{puntata}"
+            fiches_vinte += puntata
+            if len(box_chance) > 2:
+                box_chance = box_chance[1:-1]
+            else:
+                box_chance = [1, 1, 1, 1]
+        else:
+            esiti[chance] = f"-{puntata}"
+            box_chance.append(puntata)
+
+        box[chance] = box_chance
+
+    saldo = fiches_vinte - fiches_totali
+    return esiti, saldo, box
