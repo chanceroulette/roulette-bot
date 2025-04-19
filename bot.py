@@ -1,149 +1,171 @@
-import logging
 import os
 import asyncio
-from telegram import Update, ReplyKeyboardRemove
+from telegram import Update
 from telegram.ext import (
-    ApplicationBuilder, CommandHandler, ContextTypes,
-    MessageHandler, filters, CallbackQueryHandler, ConversationHandler
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
 )
-from strategy import (
-    StrategyManager, get_chances_from_numbers,
-    build_session_report, should_suggest_change
-)
-from keyboards import main_menu_keyboard, roulette_keyboard, build_chances_keyboard
 from dotenv import load_dotenv
 
-# Carica variabili da .env o da Render dashboard
+from strategy import (
+    suggerisci_chances,
+    build_session_report,
+    calcola_esito,
+)
+from keyboards import (
+    menu_keyboard,
+    number_keyboard,
+)
+
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
 ADMIN_ID = 5033904813
 
-# Logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+user_data = {}
 
-# Inizializza strategia
-strategy_manager = StrategyManager()
-
-# Stati della conversazione
-INSERISCI_NUMERI, INSERISCI_15_NUMERI, SELEZIONA_CHANCES = range(3)
+HELP_TEXT = (
+    "Questo bot ti aiuta a seguire la strategia dei box sulla roulette europea.\n\n"
+    "Comandi:\n"
+    "/menu – Mostra i comandi\n"
+    "/primi15 – Inserisci 15 numeri iniziali per le statistiche\n"
+    "/modalita_inserimento – Avvia inserimento numeri\n"
+    "/report – Vedi lo stato attuale\n"
+    "/storico – Visualizza i numeri usciti\n"
+    "/annulla_ultima – Annulla ultima estrazione\n"
+    "/id – Il tuo ID Telegram\n"
+    "/admin – Solo per l'amministratore"
+)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id == ADMIN_ID:
-        context.user_data["is_admin"] = True
+    uid = update.effective_user.id
+    if uid not in user_data:
+        user_data[uid] = {
+            "session": [],
+            "numeri_iniziali": [],
+            "chances_attive": [],
+            "box": {},
+            "saldo": 0,
+            "games": 0,
+            "wins": 0,
+            "losses": 0,
+            "inserimento_iniziale": False,
+            "modalita_inserimento": False,
+        }
     await update.message.reply_text(
-        "Benvenuto in Chance Roulette!\n"
-        "Questo bot ti aiuta a tracciare la tua strategia alla roulette europea.\n"
-        "Scrivi /menu per iniziare oppure usa i comandi manuali.\n\n"
-        "Per supporto: info@trilium-bg.com\n"
-        "Copyright © 2025 Fabio Felice Cudia"
+        "Benvenuto in Chance Roulette!\nScrivi /menu per iniziare oppure /help per i comandi.",
+        reply_markup=menu_keyboard()
     )
-
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Menu comandi:", reply_markup=main_menu_keyboard())
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "Questo bot ti aiuta a seguire la strategia dei box alla roulette.\n"
-        "Inserisci i numeri estratti uno alla volta e ricevi i report aggiornati.\n\n"
-        "Per supporto: info@trilium-bg.com\n"
-        "© 2025 Fabio Felice Cudia"
-    )
+    await update.message.reply_text(HELP_TEXT, reply_markup=menu_keyboard())
 
-async def id_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    await update.message.reply_text(f"Il tuo ID Telegram è: {user_id}")
+async def mostra_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(f"Il tuo ID Telegram è: {update.effective_user.id}")
 
-async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if user_id == ADMIN_ID:
-        context.user_data["is_admin"] = True
-        await update.message.reply_text("Accesso admin autorizzato.", reply_markup=main_menu_keyboard())
-    else:
-        await update.message.reply_text("Accesso negato.")
-
-async def primi15(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data["numeri"] = []
-    await update.message.reply_text("Inserisci i 15 numeri iniziali uno alla volta.", reply_markup=roulette_keyboard())
-    return INSERISCI_15_NUMERI
-
-async def handle_primi15(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    numero = int(update.message.text)
-    context.user_data["numeri"].append(numero)
-    n = len(context.user_data["numeri"])
-    if n < 15:
-        await update.message.reply_text(f"Numero {numero} registrato. Inserisci il prossimo ({n}/15):")
-        return INSERISCI_15_NUMERI
-    else:
-        strategy_manager.reset()
-        numeri = context.user_data["numeri"]
-        strategy_manager.primi_15 = numeri
-        context.user_data["scelte"] = get_chances_from_numbers(numeri)
-        await update.message.reply_text(
-            f"Tutti i 15 numeri iniziali registrati: {numeri}\n"
-            f"Chances consigliate: {', '.join(context.user_data['scelte'])}",
-            reply_markup=build_chances_keyboard()
-        )
-        return SELEZIONA_CHANCES
-
-async def seleziona_chances(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chance = update.message.text
-    scelte = context.user_data.get("scelte", [])
-    if chance not in scelte:
-        scelte.append(chance)
-    context.user_data["chances_attive"] = scelte
-    await update.message.reply_text("Da ora in poi inserisci i nuovi numeri per seguire la strategia.", reply_markup=roulette_keyboard())
-    return INSERISCI_NUMERI
-
-async def inserisci(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data.setdefault("chances_attive", [])
-    context.user_data.setdefault("storico", [])
-    numero = int(update.message.text)
-    context.user_data["storico"].append(numero)
-
-    report = strategy_manager.genera_report(numero, context.user_data["chances_attive"])
-    suggerimento = should_suggest_change(context.user_data["storico"], context.user_data["chances_attive"])
-
-    messaggio = f"NUMERO USCITO: {numero}\n{report}"
-    if suggerimento:
-        messaggio += f"\n\nSuggerimento: {suggerimento}"
-    await update.message.reply_text(messaggio)
-
-    return INSERISCI_NUMERI
-
-async def annulla_ultima(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    strategy_manager.annulla_ultimo()
-    await update.message.reply_text("Ultimo numero annullato.")
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Menu comandi:", reply_markup=menu_keyboard())
 
 async def storico(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    storico = strategy_manager.storico
-    await update.message.reply_text(f"Numeri registrati: {storico}")
+    uid = update.effective_user.id
+    seq = user_data[uid]["session"]
+    if seq:
+        testo = "Numeri usciti: " + ", ".join(str(n) for n in seq)
+    else:
+        testo = "Nessun numero registrato."
+    await update.message.reply_text(testo, reply_markup=menu_keyboard())
 
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+async def annulla_ultima(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if user_data[uid]["session"]:
+        last = user_data[uid]["session"].pop()
+        await update.message.reply_text(f"Annullata estrazione: {last}", reply_markup=menu_keyboard())
+    else:
+        await update.message.reply_text("Nessuna estrazione da annullare.", reply_markup=menu_keyboard())
 
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("primi15", primi15)],
-        states={
-            INSERISCI_15_NUMERI: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_primi15)],
-            SELEZIONA_CHANCES: [MessageHandler(filters.TEXT & ~filters.COMMAND, seleziona_chances)],
-            INSERISCI_NUMERI: [MessageHandler(filters.TEXT & ~filters.COMMAND, inserisci)]
-        },
-        fallbacks=[CommandHandler("menu", menu)]
+async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    testo = build_session_report(user_data[uid])
+    await update.message.reply_text(testo, reply_markup=menu_keyboard())
+
+async def primi15(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    d = user_data[uid]
+    d["numeri_iniziali"] = []
+    d["inserimento_iniziale"] = True
+    d["modalita_inserimento"] = False
+    await update.message.reply_text(
+        "Inserisci i primi 15 numeri uno alla volta.",
+        reply_markup=number_keyboard(),
     )
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("menu", menu))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("id", id_command))
-    app.add_handler(CommandHandler("admin", admin))
-    app.add_handler(CommandHandler("annulla_ultima", annulla_ultima))
-    app.add_handler(CommandHandler("storico", storico))
-    app.add_handler(conv_handler)
+async def modalita_inserimento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    d = user_data[uid]
+    if not d["chances_attive"]:
+        await update.message.reply_text("Devi prima usare /primi15 per generare le chances consigliate.")
+        return
+    d["modalita_inserimento"] = True
+    d["inserimento_iniziale"] = False
+    await update.message.reply_text("Modalità inserimento attiva.", reply_markup=number_keyboard())
 
-    app.run_polling()
+async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id == ADMIN_ID:
+        msg = f"⚙️ Pannello Admin attivo.\nUtenti: {len(user_data)}"
+        await update.message.reply_text(msg)
+    else:
+        await update.message.reply_text("Non sei autorizzato.", reply_markup=menu_keyboard())
 
+async def handle_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    testo = update.message.text
+    if not testo.isdigit():
+        return
+    n = int(testo)
+    uid = update.effective_user.id
+    d = user_data[uid]
+
+    if d["inserimento_iniziale"]:
+        d["numeri_iniziali"].append(n)
+        cnt = len(d["numeri_iniziali"])
+        if cnt < 15:
+            await update.message.reply_text(f"Numero {n} registrato. Inserisci il prossimo ({cnt+1}/15):", reply_markup=number_keyboard())
+        else:
+            chance = suggerisci_chances(d["numeri_iniziali"])
+            d["chances_attive"] = chance
+            for ch in chance:
+                d["box"][ch] = [1, 1, 1, 1]
+            await update.message.reply_text(
+                f"Statistiche completate. Chances consigliate: {', '.join(chance)}\nOra usa /modalita_inserimento",
+                reply_markup=menu_keyboard(),
+            )
+            d["inserimento_iniziale"] = False
+        return
+
+    if d["modalita_inserimento"]:
+        d["session"].append(n)
+        d["games"] += 1
+        risultato = calcola_esito(n, d)
+        await update.message.reply_text(risultato, reply_markup=menu_keyboard())
+    else:
+        await update.message.reply_text("Attiva /modalita_inserimento prima di inserire numeri.", reply_markup=menu_keyboard())
+
+# MAIN
 if __name__ == "__main__":
-    main()
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("id", mostra_id))
+    app.add_handler(CommandHandler("menu", menu))
+    app.add_handler(CommandHandler("storico", storico))
+    app.add_handler(CommandHandler("annulla_ultima", annulla_ultima))
+    app.add_handler(CommandHandler("report", report))
+    app.add_handler(CommandHandler("primi15", primi15))
+    app.add_handler(CommandHandler("modalita_inserimento", modalita_inserimento))
+    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r"^\d{1,2}$"), handle_number))
+
+    print("Bot avviato")
+    asyncio.run(app.run_polling())
