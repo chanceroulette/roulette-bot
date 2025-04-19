@@ -1,11 +1,14 @@
 import os
 import logging
+from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
-from datetime import datetime
 from dotenv import load_dotenv
 
-# Carica le variabili d'ambiente
+from strategy import StrategiaRoulette
+from keyboards import genera_tastiera_numerica
+
+# Carica variabili d’ambiente
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
@@ -14,13 +17,12 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO
 )
 
-# Config admin
+# Configurazioni
 ADMIN_ID = 5033904813
 ADMIN_PASSWORD = "@@Zaq12wsx@@25"
-
-# Stato utenti
 UTENTI = {}
 
+# Inizializza utente
 def init_user(user_id):
     if user_id not in UTENTI:
         UTENTI[user_id] = {
@@ -43,7 +45,7 @@ async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     init_user(user_id)
 
-    keyboard = [["/report", "/storico", "/annulla_ultima"], ["/id", "/help"]]
+    keyboard = [["/modalita_inserimento"], ["/report", "/storico", "/annulla_ultima"], ["/id", "/help"]]
     if user_id == ADMIN_ID or UTENTI[user_id]["admin"]:
         keyboard.append(["/admin"])
 
@@ -57,23 +59,28 @@ async def mostra_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /help
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Questo bot ti aiuta a seguire la tua strategia personalizzata alla roulette europea.\n\n"
-        "Scrivi /menu per visualizzare i comandi.\n"
-        "Per assistenza: info@trilium-bg.com\n"
+        "Questo bot ti aiuta a seguire la tua strategia alla roulette europea.\n\n"
+        "Scrivi /menu per iniziare.\n"
+        "Supporto: info@trilium-bg.com\n"
         "© 2025 Fabio Felice Cudia"
     )
 
 # /report
 async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = UTENTI[update.effective_user.id]
-    durata = datetime.now() - user["inizio"]
+    user_id = update.effective_user.id
+    strategia = UTENTI[user_id].get("strategia")
+    if not strategia:
+        await update.message.reply_text("Non hai ancora iniziato una sessione.")
+        return
+
+    durata = datetime.now() - UTENTI[user_id]["inizio"]
     minuti, secondi = divmod(durata.total_seconds(), 60)
     await update.message.reply_text(
-        f"REPORT SESSIONE\n\n"
-        f"Giocate: {len(user['storico'])}\n"
-        f"Vinte: {user['vinte']} | Perse: {user['perse']}\n"
-        f"Saldo: {user['saldo']} fiche\n"
-        f"Tempo di gioco: {int(minuti)}m {int(secondi)}s"
+        f"REPORT SESSIONE\n"
+        f"Giocate: {len(UTENTI[user_id]['storico'])}\n"
+        f"Vinte: {strategia.vinte} | Perse: {strategia.perse}\n"
+        f"Saldo: {strategia.saldo} fiche\n"
+        f"Tempo: {int(minuti)}m {int(secondi)}s"
     )
 
 # /storico
@@ -139,6 +146,48 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         UTENTI[user_id]["admin"] = False
         await query.edit_message_text("Logout effettuato.")
 
+# /modalita_inserimento
+async def modalita_inserimento(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    init_user(user_id)
+
+    if "strategia" not in UTENTI[user_id]:
+        UTENTI[user_id]["strategia"] = StrategiaRoulette()
+        UTENTI[user_id]["strategia"].attiva_chances(["Rosso", "Pari", "Passe"])
+
+    await update.message.reply_text(
+        "Modalità inserimento attiva.\nTocca un numero della roulette:",
+        reply_markup=genera_tastiera_numerica()
+    )
+
+# Gestione numero inserito
+async def gestisci_numero(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    testo = update.message.text
+
+    if not testo.isdigit():
+        await update.message.reply_text("Inserisci solo numeri tra 0 e 36.")
+        return
+
+    numero = int(testo)
+    if numero < 0 or numero > 36:
+        await update.message.reply_text("Numero non valido.")
+        return
+
+    strategia = UTENTI[user_id]["strategia"]
+    UTENTI[user_id]["storico"].append(numero)
+
+    puntate = strategia.calcola_puntate()
+    risultati = strategia.aggiorna_esito(numero)
+
+    msg = f"NUMERO USCITO: {numero}\n\n"
+    for chance, fiche in puntate.items():
+        risultato = risultati[chance]
+        msg += f"{chance}: puntate {fiche} fiche → esito: {risultato}\n"
+
+    msg += f"\nSaldo totale: {strategia.saldo} fiche\n"
+    await update.message.reply_text(msg, reply_markup=genera_tastiera_numerica())
+
 # MAIN
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
@@ -150,8 +199,10 @@ def main():
     app.add_handler(CommandHandler("report", report))
     app.add_handler(CommandHandler("storico", storico))
     app.add_handler(CommandHandler("annulla_ultima", annulla_ultima))
+    app.add_handler(CommandHandler("modalita_inserimento", modalita_inserimento))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CallbackQueryHandler(admin_callback))
+    app.add_handler(MessageHandler(filters.Regex("^[0-9]{1,2}$"), gestisci_numero))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_password))
 
     app.run_polling()
