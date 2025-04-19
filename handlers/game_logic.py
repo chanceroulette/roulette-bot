@@ -107,6 +107,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             turn_won += puntata
         else:
             box.append(puntata)
+            state["boxes"][ch] = box  # Assicurati di riassegnare il box aggiornato
             stato = format_box(box)
             result += f"❌ {ch}: perso {puntata} fiches — nuovo box: {stato}\n"
             turn_lost += puntata
