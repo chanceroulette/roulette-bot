@@ -76,26 +76,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🎯 Inserisci i primi 15–20 numeri usciti, uno alla volta.\nQuando hai finito, premi ✅ Analizza.",
         reply_markup=build_keyboard()
     )
-
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📋 Comandi disponibili:\n"
-        "/start – Inizia nuova sessione\n"
-        "/reset – Azzera tutto\n"
-        "/menu – Mostra i comandi\n"
-        "/help – Info sul bot\n"
-        "/statistiche – (solo admin)\n"
-        "/utenti – (solo admin)",
-        reply_markup=build_keyboard()
-    )
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "🎰 Benvenuto in Chance Roulette!\n\n"
-        "Questo bot ti aiuta a seguire una strategia matematica sulla roulette basata sulle chances semplici (Rosso/Nero, Pari/Dispari...). "
-        "Inserisci i primi 15–20 numeri per analizzare quali chances sono più favorevoli. Poi scegli quali attivare e gioca con gestione automatica dei box."
-    )
-    async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_ids.add(user_id)
     text = update.message.text.strip()
