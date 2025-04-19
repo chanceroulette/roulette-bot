@@ -1,42 +1,43 @@
 import os
 import json
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+import time
+from datetime import datetime
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, CallbackQueryHandler, filters
+
+from flask import Flask
+import threading
 
 CHANCES = ["Rosso", "Nero", "Pari", "Dispari", "Manque", "Passe"]
-rosso = {1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36}
-nero = {2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35}
-DATA_FILE = "sessione.json"
+rosso = {1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36}
+nero = {2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35}
 
-BOXES = {}
-ACTIVE_CHANCES = []
-FIRST15 = []
-FICHES_VINTE = 0
-FICHES_PERSE = 0
-MODALITA_INSERIMENTO = False
+USER_DATA_DIR = "dati_utenti"
+os.makedirs(USER_DATA_DIR, exist_ok=True)
 
-def salva_sessione():
-    with open(DATA_FILE, "w") as f:
-        json.dump({
-            "BOXES": BOXES,
-            "ACTIVE_CHANCES": ACTIVE_CHANCES,
-            "FIRST15": FIRST15,
-            "FICHES_VINTE": FICHES_VINTE,
-            "FICHES_PERSE": FICHES_PERSE,
-            "MODALITA_INSERIMENTO": MODALITA_INSERIMENTO
-        }, f)
+def user_file(user_id): return os.path.join(USER_DATA_DIR, f"{user_id}.json")
 
-def carica_sessione():
-    global BOXES, ACTIVE_CHANCES, FIRST15, FICHES_VINTE, FICHES_PERSE, MODALITA_INSERIMENTO
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            dati = json.load(f)
-            BOXES = dati.get("BOXES", {})
-            ACTIVE_CHANCES = dati.get("ACTIVE_CHANCES", [])
-            FIRST15 = dati.get("FIRST15", [])
-            FICHES_VINTE = dati.get("FICHES_VINTE", 0)
-            FICHES_PERSE = dati.get("FICHES_PERSE", 0)
-            MODALITA_INSERIMENTO = dati.get("MODALITA_INSERIMENTO", False)
+def save_user_data(user_id, data):
+    with open(user_file(user_id), "w") as f:
+        json.dump(data, f)
+
+def load_user_data(user_id):
+    path = user_file(user_id)
+    if os.path.exists(path):
+        with open(path, "r") as f:
+            return json.load(f)
+    return {
+        "boxes": {},
+        "chances": [],
+        "history": [],
+        "fiches_vinte": 0,
+        "fiches_perse": 0,
+        "giocate": 0,
+        "inserimento": False,
+        "inizio": time.time(),
+        "last_state": None,
+        "is_pro": False
+    }
 
 def is_win(chance, number):
     if number == 0: return False
@@ -53,145 +54,196 @@ def get_keyboard():
     row = []
     for i in range(1, 37):
         row.append(KeyboardButton(str(i)))
-        if len(row) == 5:
+        if len(row) == 6:
             layout.append(row)
             row = []
-    if row:
-        layout.append(row)
-    layout.append([KeyboardButton("0")])
-    return ReplyKeyboardMarkup(layout, resize_keyboard=True, one_time_keyboard=False)
+    if row: layout.append(row)
+    layout.append([KeyboardButton("0"), KeyboardButton("Menu")])
+    return ReplyKeyboardMarkup(layout, resize_keyboard=True)
 
 def suggest_chances(numbers):
-    counts = {chance: 0 for chance in CHANCES}
+    counts = {c: 0 for c in CHANCES}
     for n in numbers:
-        for chance in CHANCES:
-            if is_win(chance, n):
-                counts[chance] += 1
-    sorted_chances = sorted(counts.items(), key=lambda x: x[1])
-    return [c[0] for c in sorted_chances[:3]]
+        for c in CHANCES:
+            if is_win(c, n): counts[c] += 1
+    return sorted(counts, key=counts.get)[:3]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global FIRST15, ACTIVE_CHANCES, BOXES, MODALITA_INSERIMENTO, FICHES_PERSE, FICHES_VINTE
-    carica_sessione()
-    if ACTIVE_CHANCES and BOXES:
-        saldo = FICHES_VINTE - FICHES_PERSE
-        await update.message.reply_text(
-            f"Hai una sessione attiva. Vuoi riprendere?\nChances: {', '.join(ACTIVE_CHANCES)}\nSaldo attuale: {saldo} fiche",
-            reply_markup=get_keyboard()
-        )
-        return
+    user_id = str(update.effective_user.id)
+    data = load_user_data(user_id)
 
-    FIRST15.clear()
-    ACTIVE_CHANCES.clear()
-    BOXES.clear()
-    MODALITA_INSERIMENTO = False
-    FICHES_PERSE = 0
-    FICHES_VINTE = 0
+    data["boxes"] = {}
+    data["chances"] = []
+    data["history"] = []
+    data["fiches_vinte"] = 0
+    data["fiches_perse"] = 0
+    data["giocate"] = 0
+    data["inserimento"] = False
+    data["inizio"] = time.time()
+
+    save_user_data(user_id, data)
+
     await update.message.reply_text(
-        "Benvenuto! Tocca i primi 15 numeri usciti sulla roulette per inizializzare la strategia.",
+        "Benvenuto! Inserisci i primi 15 numeri usciti per inizializzare il sistema.",
         reply_markup=get_keyboard()
     )
 
 async def handle_number(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global FIRST15, MODALITA_INSERIMENTO
+    user_id = str(update.effective_user.id)
+    data = load_user_data(user_id)
     text = update.message.text.strip()
+
+    if text.lower() == "menu":
+        await update.message.reply_text(
+            "/report - Report attuale\n/annulla_ultima - Annulla ultima\n/storico - Mostra numeri usciti"
+        )
+        return
+
     if not text.isdigit():
         return
+
     number = int(text)
-    if not MODALITA_INSERIMENTO:
-        FIRST15.append(number)
-        if len(FIRST15) < 15:
-            await update.message.reply_text(f"Hai inserito {len(FIRST15)}/15 numeri.")
-        elif len(FIRST15) == 15:
-            await update.message.reply_text("Analizzo le ultime 15 estrazioni...")
-            suggerite = suggest_chances(FIRST15)
-            keyboard = [[InlineKeyboardButton(c, callback_data=f"attiva_{c}")] for c in CHANCES]
-            keyboard.append([InlineKeyboardButton("✅ Conferma", callback_data="conferma_chances")])
+    if not data["inserimento"]:
+        data["history"].append(number)
+        if len(data["history"]) == 15:
+            suggerite = suggest_chances(data["history"])
             context.user_data["scelte"] = []
+            buttons = [[InlineKeyboardButton(c, callback_data=f"attiva_{c}")] for c in CHANCES]
+            buttons.append([InlineKeyboardButton("✅ Conferma", callback_data="conferma_chances")])
             await update.message.reply_text(
-                f"Ti consiglio di attivare: {', '.join(suggerite)}\nSeleziona le chances che vuoi attivare:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
+                f"Ti consiglio: {', '.join(suggerite)}\nSeleziona le chances:",
+                reply_markup=InlineKeyboardMarkup(buttons)
             )
-    else:
-        await inserisci_giocata(update, context, number)
-
-async def seleziona_chances(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global ACTIVE_CHANCES, BOXES, MODALITA_INSERIMENTO
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    if data.startswith("attiva_"):
-        chance = data.replace("attiva_", "")
-        scelte = context.user_data.get("scelte", [])
-        if chance in scelte:
-            scelte.remove(chance)
         else:
-            scelte.append(chance)
-        context.user_data["scelte"] = scelte
-        await query.edit_message_text(
-            f"Hai selezionato: {', '.join(scelte)}\nPremi ✅ Conferma per iniziare.",
-            reply_markup=query.message.reply_markup
-        )
-    elif data == "conferma_chances":
-        ACTIVE_CHANCES = context.user_data.get("scelte", [])
-        for ch in ACTIVE_CHANCES:
-            BOXES[ch] = [1, 1, 1, 1]
-        MODALITA_INSERIMENTO = True
-        await query.edit_message_text("Modalità inserimento attiva. Inizia a toccare i numeri.")
-        await query.message.reply_text("Tastiera attivata.", reply_markup=get_keyboard())
-        salva_sessione()
+            await update.message.reply_text(f"Numeri inseriti: {len(data['history'])}/15")
+        save_user_data(user_id, data)
+        return
 
-async def inserisci_giocata(update: Update, context: ContextTypes.DEFAULT_TYPE, numero: int):
-    global BOXES, FICHES_PERSE, FICHES_VINTE
-    messaggio = f"Numero inserito: {numero}\n"
-    fiches_giro_vinte = 0
-    fiches_giro_perse = 0
-    prossima_puntata = []
+    if not data.get("is_pro") and data["giocate"] >= 15:
+        await update.message.reply_text("Hai raggiunto il limite di 15 giocate. Passa alla versione PRO.")
+        return
 
-    for chance in ACTIVE_CHANCES:
-        box = BOXES.get(chance, [])
-        if not box:
-            box = [1, 1, 1, 1]
-            BOXES[chance] = box
+    data["last_state"] = json.dumps(data)
 
+    msg = f"Numero inserito: {number}\n"
+    fiches_vinte = 0
+    fiches_perse = 0
+    prossime = []
+
+    for chance in data["chances"]:
+        box = data["boxes"].get(chance, [1, 1, 1, 1])
         puntata = box[0] if len(box) == 1 else box[0] + box[-1]
-
-        if is_win(chance, numero):
-            fiches_giro_vinte += puntata
-            messaggio += f"{chance}: VINTO {puntata} fiche\n"
+        if is_win(chance, number):
+            fiches_vinte += puntata
+            msg += f"{chance}: VINTO {puntata}\n"
             if len(box) >= 2:
                 box.pop()
                 box.pop(0)
             else:
                 box.clear()
         else:
-            fiches_giro_perse += puntata
+            fiches_perse += puntata
             box.append(puntata)
-            messaggio += f"{chance}: PERSO {puntata} fiche\n"
-
+            msg += f"{chance}: PERSO {puntata}\n"
         if not box:
-            BOXES[chance] = [1, 1, 1, 1]
+            box = [1, 1, 1, 1]
+        data["boxes"][chance] = box
+        p = box[0] if len(box) == 1 else box[0] + box[-1]
+        prossime.append(f"{chance}: {p}")
 
-        puntata_next = BOXES[chance][0] if len(BOXES[chance]) == 1 else BOXES[chance][0] + BOXES[chance][-1]
-        prossima_puntata.append(f"{chance}: {puntata_next} fiche")
+    data["fiches_vinte"] += fiches_vinte
+    data["fiches_perse"] += fiches_perse
+    data["giocate"] += 1
+    save_user_data(user_id, data)
 
-    FICHES_VINTE += fiches_giro_vinte
-    FICHES_PERSE += fiches_giro_perse
-    saldo = FICHES_VINTE - FICHES_PERSE
-    messaggio += f"\n🎯 Giro: vinte {fiches_giro_vinte} fiche, perse {fiches_giro_perse} fiche"
-    messaggio += f"\n📊 Totale: vinte {FICHES_VINTE}, perse {FICHES_PERSE} → saldo: {saldo:+}"
-    messaggio += f"\n\n🎯 Prossima puntata:\n" + "\n".join(prossima_puntata)
+    saldo = data["fiches_vinte"] - data["fiches_perse"]
+    msg += f"\nGiro: +{fiches_vinte} / -{fiches_perse} fiche"
+    msg += f"\nTotale: +{data['fiches_vinte']} / -{data['fiches_perse']} → saldo: {saldo:+}"
+    msg += f"\nGiocate totali: {data['giocate']}"
+    msg += "\n\nProssima puntata:\n" + "\n".join(prossime)
 
-    await update.message.reply_text(messaggio)
-    salva_sessione()
+    await update.message.reply_text(msg)
+
+async def seleziona_chances(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = str(query.from_user.id)
+    data = load_user_data(user_id)
+    await query.answer()
+    d = query.data
+    if d.startswith("attiva_"):
+        c = d.replace("attiva_", "")
+        if c in context.user_data["scelte"]:
+            context.user_data["scelte"].remove(c)
+        else:
+            context.user_data["scelte"].append(c)
+        await query.edit_message_text(
+            f"Selezionate: {', '.join(context.user_data['scelte'])}",
+            reply_markup=query.message.reply_markup
+        )
+    elif d == "conferma_chances":
+        data["chances"] = context.user_data["scelte"]
+        data["boxes"] = {c: [1, 1, 1, 1] for c in data["chances"]}
+        data["inserimento"] = True
+        save_user_data(user_id, data)
+        await query.edit_message_text("Chances attivate. Inserisci i numeri.")
+        await query.message.reply_text("Modalità attiva.", reply_markup=get_keyboard())
+
+async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    data = load_user_data(user_id)
+    durata = int(time.time() - data["inizio"])
+    minuti = durata // 60
+    secondi = durata % 60
+    saldo = data["fiches_vinte"] - data["fiches_perse"]
+    await update.message.reply_text(
+        f"REPORT SESSIONE\n\n"
+        f"Giocate totali: {data['giocate']}\n"
+        f"Vinte: {data['fiches_vinte']} | Perse: {data['fiches_perse']}\n"
+        f"Saldo: {saldo:+} fiche\n"
+        f"Tempo di gioco: {minuti} min {secondi} sec\n"
+        f"Chances attive: {', '.join(data['chances'])}"
+    )
+
+async def annulla_ultima(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    path = user_file(user_id)
+    data = load_user_data(user_id)
+    if not data["last_state"]:
+        await update.message.reply_text("Non puoi annullare ora.")
+        return
+    with open(path, "w") as f:
+        f.write(data["last_state"])
+    await update.message.reply_text("Ultima giocata annullata.")
+
+async def storico(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_user.id)
+    data = load_user_data(user_id)
+    numeri = data.get("history", [])
+    if not numeri:
+        await update.message.reply_text("Nessun numero registrato.")
+    else:
+        await update.message.reply_text("Numeri inseriti:\n" + ", ".join(str(n) for n in numeri))
 
 def main():
     token = os.getenv("TELEGRAM_TOKEN")
     app = ApplicationBuilder().token(token).build()
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("report", report))
+    app.add_handler(CommandHandler("storico", storico))
+    app.add_handler(CommandHandler("annulla_ultima", annulla_ultima))
     app.add_handler(CallbackQueryHandler(seleziona_chances))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_number))
     app.run_polling()
+
+# --- WEB SERVER PER RENDER + UPTIMEROBOT ---
+web_app = Flask(__name__)
+@web_app.route('/')
+def ping(): return 'Bot attivo'
+
+def run_web():
+    web_app.run(host='0.0.0.0', port=10000)
+
+threading.Thread(target=run_web).start()
 
 if __name__ == "__main__":
     main()
