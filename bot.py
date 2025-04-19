@@ -128,7 +128,8 @@ async def storico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data[user_id]["boxes"] = {ch: init_box() for ch in suggestion}
     user_data[user_id]["history"].clear()
     await update.message.reply_text(
-       "📊 Analisi completata su {} numeri.\nChances suggerite: {}".format(len(sequence), ', '.join(suggestion)),
+        f"📊 Analisi completata su {len(sequence)} numeri.\nChances suggerite: {', '.join(suggestion)}"
+Chances suggerite: {', '.join(suggestion)}",
         reply_markup=roulette_keyboard()
     )
 
@@ -138,7 +139,7 @@ async def box(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_id not in user_data:
         await update.message.reply_text("Usa prima /start")
         return
-    msg = "📦 Stato attuale dei box:
+    msg = "📦 Stato attuale dei box:\n"
 "
     for ch in user_data[user_id]["active_chances"]:
         box = user_data[user_id]["boxes"][ch]
