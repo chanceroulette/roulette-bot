@@ -1,129 +1,151 @@
-import logging
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters, ConversationHandler
-from datetime import datetime
 import os
+import json
+import datetime
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, CallbackQueryHandler, filters
 
-TOKEN = "INSERISCI_IL_TUO_TOKEN"
+# Recupera il token dalla variabile d’ambiente
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# ID Telegram di Fabio come admin
 ADMIN_ID = 5033904813
 ADMIN_PASSWORD = "@@Zaq12wsx@@25"
 
-# Variabili globali per ogni utente
+# Dati utente
 UTENTI = {}
 
-# Stati conversazione
-INSERIMENTO, ADMIN_LOGIN = range(2)
-
-# Colori e categorie roulette
-CHANCES = {
-    'Rosso': [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36],
-    'Nero': [2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35],
-    'Pari': [x for x in range(1, 37) if x % 2 == 0],
-    'Dispari': [x for x in range(1, 37) if x % 2 != 0],
-    'Manque': list(range(1, 19)),
-    'Passe': list(range(19, 37))
-}
-
-# Inizializza un nuovo utente
+# Inizializzazione utente
 def init_user(user_id):
     UTENTI[user_id] = {
-        "attive": [],
-        "box": {},
         "storico": [],
         "vinte": 0,
         "perse": 0,
         "saldo": 0,
-        "limite": 500,
-        "minimo_fiche": 5,
-        "stop_win": None,
-        "stop_loss": None,
-        "inizio": datetime.now(),
+        "inizio": datetime.datetime.now(),
         "admin": False
     }
 
+# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if user_id not in UTENTI:
         init_user(user_id)
-    await update.message.reply_text("Benvenuto in Chance Roulette! Scrivi /menu per iniziare.")
+    await update.message.reply_text("Benvenuto in Chance Roulette!\nScrivi /menu per iniziare.")
 
-async def id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# /menu
+async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    keyboard = [["/report", "/storico", "/annulla_ultima"], ["/id", "/help"]]
+    if user_id == ADMIN_ID or UTENTI[user_id]["admin"]:
+        keyboard.append(["/admin"])
+    await update.message.reply_text("Menu comandi:", reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True))
+
+# /id
+async def mostra_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(f"Il tuo ID Telegram è: {update.effective_user.id}")
 
+# /help
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Questo bot ti aiuta a seguire la strategia dei box. Per assistenza scrivi a info@trilium-bg.com")
-
-async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [["/report", "/storico", "/annulla_ultima"], ["/id", "/help"]]
-    if update.effective_user.id == ADMIN_ID or UTENTI[update.effective_user.id]["admin"]:
-        keyboard.append(["/admin"])
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    await update.message.reply_text("Menu comandi:", reply_markup=reply_markup)
-
-async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = UTENTI[update.effective_user.id]
-    tempo = datetime.now() - user["inizio"]
-    minuti, secondi = divmod(tempo.total_seconds(), 60)
-    chances_attive = ', '.join(user["attive"])
     await update.message.reply_text(
-        f"REPORT SESSIONE\n\n"
-        f"Giocate totali: {len(user['storico'])}\n"
-        f"Vinte: {user['vinte']} | Perse: {user['perse']}\n"
-        f"Saldo: {user['saldo']} fiches\n"
-        f"Tempo di gioco: {int(minuti)} min {int(secondi)} sec\n"
-        f"Chances attive: {chances_attive}"
+        "Benvenuto in Chance Roulette!\n\n"
+        "Questo bot ti aiuta a tracciare la tua strategia alla roulette europea.\n"
+        "Scrivi /menu per iniziare oppure usa i comandi manuali.\n\n"
+        "Per supporto: info@trilium-bg.com\n"
+        "Copyright © 2025 Fabio Felice Cudia"
     )
 
+# /storico
 async def storico(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = UTENTI[update.effective_user.id]
-    if not user["storico"]:
+    user = UTENTI.get(update.effective_user.id, {})
+    if not user.get("storico"):
         await update.message.reply_text("Nessun numero registrato.")
     else:
-        await update.message.reply_text("Numeri usciti:\n" + ', '.join(map(str, user["storico"][-15:])))
+        numeri = ", ".join(map(str, user["storico"]))
+        await update.message.reply_text(f"Ultimi numeri: {numeri}")
 
+# /report
+async def report(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = UTENTI.get(update.effective_user.id, {})
+    durata = datetime.datetime.now() - user["inizio"]
+    minuti, secondi = divmod(durata.total_seconds(), 60)
+    await update.message.reply_text(
+        f"REPORT\n"
+        f"Giocate: {len(user['storico'])}\n"
+        f"Vinte: {user['vinte']} | Perse: {user['perse']}\n"
+        f"Saldo: {user['saldo']} fiche\n"
+        f"Tempo: {int(minuti)}min {int(secondi)}sec"
+    )
+
+# /annulla_ultima
 async def annulla_ultima(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = UTENTI[update.effective_user.id]
+    user = UTENTI.get(update.effective_user.id, {})
     if user["storico"]:
         annullato = user["storico"].pop()
         await update.message.reply_text(f"Ultimo numero annullato: {annullato}")
     else:
         await update.message.reply_text("Nessun numero da annullare.")
 
+# /admin (accesso con password)
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID and not UTENTI[update.effective_user.id]["admin"]:
-        await update.message.reply_text("Comando non valido.")
-        return ConversationHandler.END
-    await update.message.reply_text("Inserisci la password di accesso:")
-    return ADMIN_LOGIN
+    user_id = update.effective_user.id
+    if user_id != ADMIN_ID:
+        await update.message.reply_text("Comando non disponibile.")
+        return
+    await update.message.reply_text("Inserisci la password admin:")
+    context.user_data["attesa_password_admin"] = True
 
-async def check_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.message.text == ADMIN_PASSWORD:
-        UTENTI[update.effective_user.id]["admin"] = True
-        await update.message.reply_text("Accesso admin effettuato.")
-    else:
-        await update.message.reply_text("Password errata.")
-    return ConversationHandler.END
+# Password admin
+async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if context.user_data.get("attesa_password_admin"):
+        if update.message.text.strip() == ADMIN_PASSWORD:
+            UTENTI[user_id]["admin"] = True
+            await update.message.reply_text(
+                "Accesso admin effettuato.",
+                reply_markup=InlineKeyboardMarkup([
+                    [InlineKeyboardButton("Utenti registrati", callback_data="admin_utenti")],
+                    [InlineKeyboardButton("Logout", callback_data="admin_logout")]
+                ])
+            )
+        else:
+            await update.message.reply_text("Password errata.")
+        context.user_data["attesa_password_admin"] = False
 
+# Callback admin
+async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+    await query.answer()
+
+    if user_id != ADMIN_ID or not UTENTI[user_id]["admin"]:
+        await query.edit_message_text("Non sei autorizzato.")
+        return
+
+    if query.data == "admin_utenti":
+        msg = f"Utenti registrati: {len(UTENTI)}\n\n"
+        msg += "\n".join(str(uid) for uid in UTENTI.keys())
+        await query.edit_message_text(msg)
+
+    elif query.data == "admin_logout":
+        UTENTI[user_id]["admin"] = False
+        await query.edit_message_text("Logout admin effettuato.")
+
+# Avvio bot
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("id", id))
-    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("menu", menu))
-    app.add_handler(CommandHandler("report", report))
+    app.add_handler(CommandHandler("id", mostra_id))
+    app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("storico", storico))
+    app.add_handler(CommandHandler("report", report))
     app.add_handler(CommandHandler("annulla_ultima", annulla_ultima))
-
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("admin", admin)],
-        states={ADMIN_LOGIN: [MessageHandler(filters.TEXT & ~filters.COMMAND, check_password)]},
-        fallbacks=[],
-    )
-    app.add_handler(conv_handler)
+    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(CallbackQueryHandler(admin_callback))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_password))
 
     app.run_polling()
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO)
     main()
