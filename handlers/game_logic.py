@@ -20,7 +20,6 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     state = user_data[user_id]
 
-    # Scelta manuale delle chances dopo l'analisi
     if state["pending_selection"] and text in ["Manque", "Pari", "Rosso", "Nero", "Dispari", "Passe"]:
         if text not in state["active_chances"]:
             state["active_chances"].append(text)
@@ -54,8 +53,8 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state["fiches_lost"] = 0
         state["pending_selection"] = True
         await update.message.reply_text(
-            f"📊 Analisi completata. Chances consigliate: {', '.join(suggested)}.\n"
-            "🔘 Seleziona le chances che vuoi usare. Premi ✅ Conferma quando sei pronto.",
+            f"📊 Analisi sui numeri inseriti.\nChances consigliate: {', '.join(suggested)}.\n"
+            "🔘 Seleziona le chances da attivare. Premi ✅ Conferma per iniziare.",
             reply_markup=build_chance_keyboard()
         )
         return
@@ -101,13 +100,15 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         puntata = box[0] + box[-1] if len(box) >= 2 else box[0] * 2
         if get_win(ch, number):
             box.pop(0)
-            if box: box.pop(-1)
+            if box:
+                box.pop(-1)
             stato = format_box(box) if box else "svuotato"
             result += f"✅ {ch}: vinto {puntata} fiches — nuovo box: {stato}\n"
             turn_won += puntata
         else:
             box.append(puntata)
-            result += f"❌ {ch}: perso {puntata} fiches — nuovo box: {format_box(box)}\n"
+            stato = format_box(box)
+            result += f"❌ {ch}: perso {puntata} fiches — nuovo box: {stato}\n"
             turn_lost += puntata
 
     state["turns"] += 1
