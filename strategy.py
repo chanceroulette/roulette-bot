@@ -1,97 +1,76 @@
-def build_session_report(session_data):
-    report = "Numeri usciti:\n"
-    numeri = session_data.get("numeri", [])
-    if not numeri:
-        report += "Nessun numero inserito."
-        return report
+# strategy.py
 
-    report += ", ".join(str(n) for n in numeri)
+RED   = {1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36}
+BLACK = set(range(1,37)) - RED
+EVEN  = {n for n in range(1,37) if n % 2 == 0}
+ODD   = set(range(1,37)) - EVEN
+MANQUE = set(range(1,19))
+PASSE  = set(range(19,37))
 
-    saldo = session_data.get("saldo", 0)
-    report += f"\n\nSaldo totale: {saldo} fiche"
+ALL_CHANCES = {
+    "rosso": RED,
+    "nero": BLACK,
+    "pari": EVEN,
+    "dispari": ODD,
+    "manque": MANQUE,
+    "passe": PASSE,
+}
 
-    return report
+def suggerisci_chances(numeri15):
+    """
+    Analizza i primi 15 numeri e restituisce le chances con più successi.
+    """
+    consigliate = []
+    for nome, insieme in ALL_CHANCES.items():
+        successi = sum(1 for n in numeri15 if n in insieme)
+        insuccessi = len(numeri15) - successi
+        if successi >= insuccessi:
+            consigliate.append(nome)
+    return consigliate
 
+def build_session_report(data):
+    """
+    Crea un report della sessione corrente.
+    """
+    righe = [
+        "▶️ REPORT SESSIONE ◀️",
+        f"Totale giocate: {data['games']}",
+        f"Vittorie: {data['wins']} | Sconfitte: {data['losses']}",
+        f"Saldo totale: {data['saldo']} fiche",
+        f"Chances attive: {', '.join(data['chances_attive'])}",
+        "Box attuali per ciascuna chance:"
+    ]
+    for chance, box in data["box"].items():
+        righe.append(f"  - {chance.capitalize()}: {box}")
+    return "\n".join(righe)
 
-def suggerisci_chances(numeri):
-    if len(numeri) < 15:
-        return []
+def calcola_esito(numero, data):
+    """
+    Calcola l’esito del numero uscito, aggiorna i box e il saldo.
+    """
+    saldo_giro = 0
+    risultati = [f"NUMERO USCITO: {numero}"]
+    for chance in data["chances_attive"]:
+        insieme = ALL_CHANCES[chance]
+        box = data["box"].get(chance, [1, 1, 1, 1])
 
-    stats = {
-        "rosso": 0,
-        "nero": 0,
-        "pari": 0,
-        "dispari": 0,
-        "manque": 0,  # 1–18
-        "passe": 0,   # 19–36
-    }
-
-    rosso = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
-    nero = [2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35]
-
-    for n in numeri[-15:]:
-        if n in rosso:
-            stats["rosso"] += 1
-        if n in nero:
-            stats["nero"] += 1
-        if n % 2 == 0:
-            stats["pari"] += 1
-        else:
-            stats["dispari"] += 1
-        if 1 <= n <= 18:
-            stats["manque"] += 1
-        elif 19 <= n <= 36:
-            stats["passe"] += 1
-
-    max_val = max(stats.values())
-    chances = [k for k, v in stats.items() if v == max_val]
-
-    return chances
-
-
-def calcola_esito(numero, chances_attive, box):
-    esiti = {}
-    fiches_totali = 0
-    fiches_vinte = 0
-
-    rosso = [1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]
-    nero = [2,4,6,8,10,11,13,15,17,20,22,24,26,28,29,31,33,35]
-
-    for chance in chances_attive:
-        box_chance = box.get(chance, [1, 1, 1, 1])
-        if len(box_chance) < 2:
-            puntata = 1
-        else:
-            puntata = box_chance[0] + box_chance[-1]
-
-        fiches_totali += puntata
-        vinta = False
-
-        if chance == "rosso" and numero in rosso:
-            vinta = True
-        elif chance == "nero" and numero in nero:
-            vinta = True
-        elif chance == "pari" and numero % 2 == 0:
-            vinta = True
-        elif chance == "dispari" and numero % 2 == 1:
-            vinta = True
-        elif chance == "manque" and 1 <= numero <= 18:
-            vinta = True
-        elif chance == "passe" and 19 <= numero <= 36:
-            vinta = True
+        stake = box[0] + box[-1] if len(box) > 1 else box[0]
+        vinta = numero in insieme
 
         if vinta:
-            esiti[chance] = f"+{puntata}"
-            fiches_vinte += puntata
-            if len(box_chance) > 2:
-                box_chance = box_chance[1:-1]
-            else:
-                box_chance = [1, 1, 1, 1]
+            box = box[1:-1] if len(box) > 2 else [1, 1, 1, 1]
+            data["wins"] += 1
+            risultato = f"+{stake}"
+            saldo_giro += stake
         else:
-            esiti[chance] = f"-{puntata}"
-            box_chance.append(puntata)
+            box.append(stake)
+            data["losses"] += 1
+            risultato = f"-{stake}"
+            saldo_giro -= stake
 
-        box[chance] = box_chance
+        data["box"][chance] = box
+        risultati.append(f"{chance.capitalize()}: puntate {stake} fiche → esito: {risultato}")
 
-    saldo = fiches_vinte - fiches_totali
-    return esiti, saldo, box
+    data["saldo"] += saldo_giro
+    risultati.append(f"\nSaldo attuale: {data['saldo']} fiche")
+    return "\n".join(risultati)
