@@ -55,7 +55,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data[user_id] = {
         "boxes": {},
         "history": [],
-        "active_chances": ["Rosso", "Pari", "Passe"]
+        "active_chances": ["Rosso", "Pari", "Passe"],
+        "turns": 0,
+        "fiches_won": 0,
+        "fiches_lost": 0
     }
     for ch in user_data[user_id]["active_chances"]:
         user_data[user_id]["boxes"][ch] = init_box()
@@ -74,18 +77,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "undo":
         if user_data[user_id]["history"]:
             last = user_data[user_id]["history"].pop()
-            for ch in user_data[user_id]["active_chances"]:
-                user_data[user_id]["boxes"][ch] = last["backup"][ch].copy()
+            user_data[user_id]["boxes"] = last["backup"]
+            user_data[user_id]["turns"] -= 1
+            user_data[user_id]["fiches_won"] -= last["won"]
+            user_data[user_id]["fiches_lost"] -= last["lost"]
             await query.edit_message_text("✅ Ultima operazione annullata.")
         else:
             await query.edit_message_text("⚠️ Nessuna operazione da annullare.")
         return
 
     number = int(data)
-    snapshot = {ch: user_data[user_id]["boxes"][ch].copy() for ch in user_data[user_id]["active_chances"]}
-    user_data[user_id]["history"].append({"number": number, "backup": snapshot})
+    backup = {ch: user_data[user_id]["boxes"][ch].copy() for ch in user_data[user_id]["active_chances"]}
+    turn_won = 0
+    turn_lost = 0
+    result = f"Hai selezionato il numero {number}\n\n"
 
-    msg = "Hai selezionato il numero {}\n\n".format(number)
     for ch in user_data[user_id]["active_chances"]:
         box = user_data[user_id]["boxes"][ch]
         if not box:
@@ -95,13 +101,30 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             box.pop(0)
             if box:
                 box.pop(-1)
-            stato = format_box(box) if box else "svuotato"
-            msg += "✅ {}: vinto {} fiches — nuovo box: {}\n".format(ch, puntata, stato)
+            result += f"✅ {ch}: vinto {puntata} fiches — nuovo box: {format_box(box) or 'svuotato'}\n"
+            turn_won += puntata
         else:
             box.append(puntata)
-            msg += "❌ {}: perso {} fiches — nuovo box: {}\n".format(ch, puntata, format_box(box))
+            result += f"❌ {ch}: perso {puntata} fiches — nuovo box: {format_box(box)}\n"
+            turn_lost += puntata
 
-    await query.edit_message_text(msg, reply_markup=roulette_keyboard())
+    user_data[user_id]["turns"] += 1
+    user_data[user_id]["fiches_won"] += turn_won
+    user_data[user_id]["fiches_lost"] += turn_lost
+    user_data[user_id]["history"].append({
+        "number": number,
+        "backup": backup,
+        "won": turn_won,
+        "lost": turn_lost
+    })
+
+    netto = user_data[user_id]["fiches_won"] - user_data[user_id]["fiches_lost"]
+    result += f"\n🎯 Giocata n. {user_data[user_id]['turns']}"
+    result += f"\n💰 Vincite totali: {user_data[user_id]['fiches_won']} fiches"
+    result += f"\n❌ Perdite totali: {user_data[user_id]['fiches_lost']} fiches"
+    result += f"\n📊 Risultato netto: {netto:+} fiches"
+
+    await query.edit_message_text(result, reply_markup=roulette_keyboard())
 
 async def storico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -113,6 +136,9 @@ async def storico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data[user_id]["active_chances"] = suggestion
     user_data[user_id]["boxes"] = {ch: init_box() for ch in suggestion}
     user_data[user_id]["history"].clear()
+    user_data[user_id]["turns"] = 0
+    user_data[user_id]["fiches_won"] = 0
+    user_data[user_id]["fiches_lost"] = 0
     suggerite = ', '.join(suggestion)
     msg = "📊 Analisi completata su {} numeri.\nChances suggerite: {}".format(len(sequence), suggerite)
     await update.message.reply_text(msg, reply_markup=roulette_keyboard())
@@ -133,7 +159,10 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data[user_id] = {
         "boxes": {},
         "history": [],
-        "active_chances": ["Rosso", "Pari", "Passe"]
+        "active_chances": ["Rosso", "Pari", "Passe"],
+        "turns": 0,
+        "fiches_won": 0,
+        "fiches_lost": 0
     }
     for ch in user_data[user_id]["active_chances"]:
         user_data[user_id]["boxes"][ch] = init_box()
