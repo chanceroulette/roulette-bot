@@ -95,8 +95,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Questo bot ti aiuta a seguire una strategia matematica sulla roulette basata sulle chances semplici (Rosso/Nero, Pari/Dispari...). "
         "Inserisci i primi 15–20 numeri per analizzare quali chances sono più favorevoli. Poi scegli quali attivare e gioca con gestione automatica dei box."
     )
-
-async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_ids.add(user_id)
     text = update.message.text.strip()
@@ -107,7 +106,6 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     state = user_data[user_id]
 
-    # Conferma manuale delle chances
     if state["pending_selection"] and text in CHANCE_ORDER:
         if text not in state["active_chances"]:
             state["active_chances"].append(text)
@@ -118,7 +116,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if state["pending_selection"] and text == "✅ Conferma":
-        if not state["active_chances"]:
+        if len(state["active_chances"]) < 2:
             await update.message.reply_text("⚠️ Devi selezionare almeno 2 chances.")
             return
         state["boxes"] = {ch: init_box() for ch in state["active_chances"]}
@@ -147,7 +145,8 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=build_chance_keyboard()
         )
         return
-            if text == "⏪ Annulla ultima":
+
+    if text == "⏪ Annulla ultima":
         if not state["is_ready"]:
             await update.message.reply_text("⚠️ Non hai ancora iniziato a giocare.", reply_markup=build_keyboard())
             return
@@ -188,7 +187,8 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         puntata = box[0] + box[-1] if len(box) >= 2 else box[0] * 2
         if get_win(ch, number):
             box.pop(0)
-            if box: box.pop(-1)
+            if box:
+                box.pop(-1)
             stato = format_box(box) if box else "svuotato"
             result += f"✅ {ch}: vinto {puntata} fiches — nuovo box: {stato}\n"
             turn_won += puntata
@@ -257,5 +257,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    
