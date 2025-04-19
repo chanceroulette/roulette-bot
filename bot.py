@@ -46,6 +46,11 @@ def build_keyboard():
     keyboard.append([KeyboardButton("⏪ Annulla ultima"), KeyboardButton("✅ Analizza")])
     return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
+def build_chance_keyboard():
+    return ReplyKeyboardMarkup([
+        [KeyboardButton(ch)] for ch in CHANCE_ORDER
+    ] + [[KeyboardButton("✅ Conferma")]], resize_keyboard=True)
+
 def get_win(chance, number):
     return number in CHANCES[chance]
 
@@ -59,11 +64,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "boxes": {},
         "history": [],
         "active_chances": [],
+        "suggested_chances": [],
         "turns": 0,
         "fiches_won": 0,
         "fiches_lost": 0,
         "input_sequence": [],
-        "is_ready": False
+        "is_ready": False,
+        "pending_selection": False
     }
     await update.message.reply_text(
         "🎯 Inserisci i primi 15–20 numeri usciti, uno alla volta.\nQuando hai finito, premi ✅ Analizza.",
@@ -86,7 +93,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🎰 Benvenuto in Chance Roulette!\n\n"
         "Questo bot ti aiuta a seguire una strategia matematica sulla roulette basata sulle chances semplici (Rosso/Nero, Pari/Dispari...). "
-        "Inserisci i primi 15–20 numeri per analizzare quali chances sono più favorevoli. Poi gioca seguendo i suggerimenti e la gestione dei box."
+        "Inserisci i primi 15–20 numeri per analizzare quali chances sono più favorevoli. Poi scegli quali attivare e gioca con gestione automatica dei box."
     )
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -98,62 +105,86 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usa /start per iniziare.")
         return
 
+    state = user_data[user_id]
+
+    # Conferma manuale delle chances
+    if state["pending_selection"] and text in CHANCE_ORDER:
+        if text not in state["active_chances"]:
+            state["active_chances"].append(text)
+            await update.message.reply_text(f"✅ Aggiunta: {text}", reply_markup=build_chance_keyboard())
+        else:
+            state["active_chances"].remove(text)
+            await update.message.reply_text(f"❌ Rimossa: {text}", reply_markup=build_chance_keyboard())
+        return
+
+    if state["pending_selection"] and text == "✅ Conferma":
+        if not state["active_chances"]:
+            await update.message.reply_text("⚠️ Devi selezionare almeno 2 chances.")
+            return
+        state["boxes"] = {ch: init_box() for ch in state["active_chances"]}
+        state["pending_selection"] = False
+        state["is_ready"] = True
+        await update.message.reply_text("✅ Chances confermate! Ora puoi iniziare a giocare.", reply_markup=build_keyboard())
+        return
+
     if text == "✅ Analizza":
-        seq = user_data[user_id]["input_sequence"]
+        seq = state["input_sequence"]
         if len(seq) < 10:
             await update.message.reply_text("⚠️ Inserisci almeno 10 numeri prima di analizzare.")
             return
-        suggestion = suggest_chances(seq)
-        user_data[user_id]["active_chances"] = suggestion
-        user_data[user_id]["boxes"] = {ch: init_box() for ch in suggestion}
-        user_data[user_id]["input_sequence"] = []
-        user_data[user_id]["history"] = []
-        user_data[user_id]["turns"] = 0
-        user_data[user_id]["fiches_won"] = 0
-        user_data[user_id]["fiches_lost"] = 0
-        user_data[user_id]["is_ready"] = True
+        suggested = suggest_chances(seq)
+        state["suggested_chances"] = suggested
+        state["active_chances"] = []
+        state["input_sequence"] = []
+        state["history"] = []
+        state["turns"] = 0
+        state["fiches_won"] = 0
+        state["fiches_lost"] = 0
+        state["pending_selection"] = True
         await update.message.reply_text(
-            f"📊 Analisi completata. Chances suggerite: {', '.join(suggestion)}.\nPuoi iniziare ora!",
-            reply_markup=build_keyboard()
+            f"📊 Analisi completata. Chances consigliate: {', '.join(suggested)}.\n"
+            "🔘 Seleziona le chances che vuoi usare. Premi ✅ Conferma quando sei pronto.",
+            reply_markup=build_chance_keyboard()
         )
         return
-
-    if text == "⏪ Annulla ultima":
-        if not user_data[user_id]["is_ready"]:
+            if text == "⏪ Annulla ultima":
+        if not state["is_ready"]:
             await update.message.reply_text("⚠️ Non hai ancora iniziato a giocare.", reply_markup=build_keyboard())
             return
-        if user_data[user_id]["history"]:
-            last = user_data[user_id]["history"].pop()
-            user_data[user_id]["boxes"] = {k: v.copy() for k, v in last["backup"].items()}
-            user_data[user_id]["turns"] -= 1
-            user_data[user_id]["fiches_won"] -= last["won"]
-            user_data[user_id]["fiches_lost"] -= last["lost"]
+        if state["history"]:
+            last = state["history"].pop()
+            state["boxes"] = {k: v.copy() for k, v in last["backup"].items()}
+            state["turns"] -= 1
+            state["fiches_won"] -= last["won"]
+            state["fiches_lost"] -= last["lost"]
             await update.message.reply_text("✅ Ultima giocata annullata.", reply_markup=build_keyboard())
         else:
             await update.message.reply_text("⚠️ Nessuna giocata da annullare.", reply_markup=build_keyboard())
         return
 
     if not text.isdigit() or not (0 <= int(text) <= 36):
-        await update.message.reply_text("Inserisci un numero valido (0–36) o premi ✅ Analizza.")
+        await update.message.reply_text("Inserisci un numero valido (0–36), oppure usa i pulsanti.")
         return
 
     number = int(text)
 
-    if not user_data[user_id]["is_ready"]:
-        user_data[user_id]["input_sequence"].append(number)
-        await update.message.reply_text(f"✅ Inserito: {number} ({len(user_data[user_id]['input_sequence'])} numeri finora)", reply_markup=build_keyboard())
+    if not state["is_ready"]:
+        state["input_sequence"].append(number)
+        await update.message.reply_text(f"✅ Inserito: {number} ({len(state['input_sequence'])} numeri finora)", reply_markup=build_keyboard())
         return
 
-    if not user_data[user_id]["active_chances"]:
-        await update.message.reply_text("⚠️ Prima devi premere ✅ Analizza per attivare le chances.", reply_markup=build_keyboard())
+    if not state["active_chances"]:
+        await update.message.reply_text("⚠️ Prima devi selezionare le chances e confermare.", reply_markup=build_keyboard())
         return
 
-    backup = {ch: user_data[user_id]["boxes"][ch].copy() for ch in user_data[user_id]["active_chances"]}
+    backup = {ch: state["boxes"][ch].copy() for ch in state["active_chances"]}
     turn_won = turn_lost = 0
     result = f"Hai selezionato il numero {number}\n\n"
 
-    for ch in user_data[user_id]["active_chances"]:
-        box = user_data[user_id]["boxes"][ch]
+    for ch in state["active_chances"]:
+        box = state["boxes"][ch]
+        if not box:
+            box = init_box()
         puntata = box[0] + box[-1] if len(box) >= 2 else box[0] * 2
         if get_win(ch, number):
             box.pop(0)
@@ -166,24 +197,26 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             result += f"❌ {ch}: perso {puntata} fiches — nuovo box: {format_box(box)}\n"
             turn_lost += puntata
 
-    user_data[user_id]["turns"] += 1
-    user_data[user_id]["fiches_won"] += turn_won
-    user_data[user_id]["fiches_lost"] += turn_lost
-    user_data[user_id]["history"].append({
+    state["turns"] += 1
+    state["fiches_won"] += turn_won
+    state["fiches_lost"] += turn_lost
+    state["history"].append({
         "number": number,
         "backup": backup,
         "won": turn_won,
         "lost": turn_lost
     })
 
-    netto = user_data[user_id]["fiches_won"] - user_data[user_id]["fiches_lost"]
-    result += f"\n🎯 Giocata n. {user_data[user_id]['turns']}"
-    result += f"\n💰 Vincite totali: {user_data[user_id]['fiches_won']} fiches"
-    result += f"\n❌ Perdite totali: {user_data[user_id]['fiches_lost']} fiches"
+    netto = state["fiches_won"] - state["fiches_lost"]
+    result += f"\n🎯 Giocata n. {state['turns']}"
+    result += f"\n💰 Vincite totali: {state['fiches_won']} fiches"
+    result += f"\n❌ Perdite totali: {state['fiches_lost']} fiches"
     result += f"\n📊 Risultato netto: {netto:+} fiches"
     result += "\n\n🔜 Prossima puntata:"
-    for ch in user_data[user_id]["active_chances"]:
-        box = user_data[user_id]["boxes"][ch]
+    for ch in state["active_chances"]:
+        box = state["boxes"][ch]
+        if not box:
+            box = init_box()
         prossima = box[0] + box[-1] if len(box) >= 2 else box[0] * 2
         result += f"\n- {ch}: {prossima} fiches"
 
@@ -224,3 +257,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    
