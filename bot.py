@@ -128,8 +128,7 @@ async def storico(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data[user_id]["boxes"] = {ch: init_box() for ch in suggestion}
     user_data[user_id]["history"].clear()
     await update.message.reply_text(
-        f"📊 Analisi completata su {len(sequence)} numeri.\nChances suggerite: {', '.join(suggestion)}"
-Chances suggerite: {', '.join(suggestion)}",
+       "📊 Analisi completata su {} numeri.\nChances suggerite: {}".format(len(sequence), ', '.join(suggestion)),
         reply_markup=roulette_keyboard()
     )
 
