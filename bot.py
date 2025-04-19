@@ -1,10 +1,12 @@
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    MessageHandler,
+    filters,
 )
 from dotenv import load_dotenv
 
@@ -58,30 +60,54 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "active_chances": [],
         "turns": 0,
         "fiches_won": 0,
-        "fiches_lost": 0
+        "fiches_lost": 0,
+        "input_sequence": []
     }
+
+    keyboard = []
+    for row in range(0, 37, 6):
+        keyboard.append([KeyboardButton(str(i)) for i in range(row, min(row+6, 37))])
+    keyboard.append([KeyboardButton("✅ Analizza")])
+
+    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
-        "Benvenuto in Chance Roulette!\n\n"
-        "Per iniziare, inserisci i primi 15 o 20 numeri usciti con il comando:\n"
-        "/storico 12 5 8 23 17 1 0 34 ..."
+        "🎯 Inserisci i primi 15–20 numeri usciti, uno alla volta.\nQuando hai finito, premi ✅ Analizza.",
+        reply_markup=reply_markup
     )
 
-async def storico(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if not context.args or not all(arg.isdigit() and 0 <= int(arg) <= 36 for arg in context.args):
-        await update.message.reply_text("Usa il comando così: /storico 5 12 18 24 ... (max 20 numeri)")
+    text = update.message.text.strip()
+
+    if user_id not in user_data:
+        await update.message.reply_text("Usa /start per iniziare.")
         return
-    sequence = [int(n) for n in context.args][-20:]
-    suggestion = suggest_chances(sequence)
-    user_data[user_id]["active_chances"] = suggestion
-    user_data[user_id]["boxes"] = {ch: init_box() for ch in suggestion}
-    user_data[user_id]["history"].clear()
-    user_data[user_id]["turns"] = 0
-    user_data[user_id]["fiches_won"] = 0
-    user_data[user_id]["fiches_lost"] = 0
-    suggerite = ', '.join(suggestion)
-    msg = "📊 Analisi completata su {} numeri.\nChances suggerite: {}".format(len(sequence), suggerite)
-    await update.message.reply_text(msg, reply_markup=roulette_keyboard())
+
+    if text == "✅ Analizza":
+        sequence = user_data[user_id]["input_sequence"]
+        if len(sequence) < 10:
+            await update.message.reply_text("Devi inserire almeno 10 numeri prima di analizzare.")
+            return
+
+        suggestion = suggest_chances(sequence)
+        user_data[user_id]["active_chances"] = suggestion
+        user_data[user_id]["boxes"] = {ch: init_box() for ch in suggestion}
+        user_data[user_id]["input_sequence"] = []
+        suggerite = ", ".join(suggestion)
+
+        await update.message.reply_text(
+            f"📊 Analisi completata su {len(sequence)} numeri.\n"
+            f"Chances suggerite: {suggerite}\n\nPuoi iniziare ora!",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        await update.message.reply_text("Clicca i numeri tramite i bottoni per giocare:", reply_markup=roulette_keyboard())
+        return
+
+    if text.isdigit() and 0 <= int(text) <= 36:
+        user_data[user_id]["input_sequence"].append(int(text))
+        await update.message.reply_text(f"✅ Inserito: {text} ({len(user_data[user_id]['input_sequence'])} numeri finora)")
+    else:
+        await update.message.reply_text("Inserisci solo numeri da 0 a 36 o premi ✅ Analizza.")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -89,7 +115,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
 
     if user_id not in user_data or not user_data[user_id]["active_chances"]:
-        await query.edit_message_text("Usa prima il comando /start e poi /storico per iniziare.")
+        await query.edit_message_text("Usa prima il comando /start e inserisci i numeri iniziali.")
         return
 
     data = query.data
@@ -140,7 +166,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     netto = user_data[user_id]["fiches_won"] - user_data[user_id]["fiches_lost"]
     result += f"\n🎯 Giocata n. {user_data[user_id]['turns']}"
-    result += f"\n✅ Vincite totali: {user_data[user_id]['fiches_won']} fiches"
+    result += f"\n💰 Vincite totali: {user_data[user_id]['fiches_won']} fiches"
     result += f"\n❌ Perdite totali: {user_data[user_id]['fiches_lost']} fiches"
     result += f"\n📊 Risultato netto: {netto:+} fiches"
 
@@ -162,16 +188,17 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "active_chances": [],
         "turns": 0,
         "fiches_won": 0,
-        "fiches_lost": 0
+        "fiches_lost": 0,
+        "input_sequence": []
     }
-    await update.message.reply_text("🔄 Sistema resettato.\nInserisci /storico per iniziare.", reply_markup=roulette_keyboard())
+    await update.message.reply_text("🔄 Sistema resettato.\nUsa /start per reiniziare.")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("storico", storico))
     app.add_handler(CommandHandler("reset", reset))
     app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_input))
     app.run_polling()
 
 if __name__ == "__main__":
