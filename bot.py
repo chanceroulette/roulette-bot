@@ -1,9 +1,8 @@
 import os
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
-    CallbackQueryHandler,
     ContextTypes,
     MessageHandler,
     filters,
@@ -40,14 +39,12 @@ def init_box():
 
 user_data = {}
 
-def roulette_keyboard():
+def build_keyboard():
     keyboard = []
     for row in range(0, 37, 6):
-        keyboard.append([
-            InlineKeyboardButton(str(i), callback_data=str(i)) for i in range(row, min(row+6, 37))
-        ])
-    keyboard.append([InlineKeyboardButton("⏪ Annulla ultima", callback_data="undo")])
-    return InlineKeyboardMarkup(keyboard)
+        keyboard.append([KeyboardButton(str(i)) for i in range(row, min(row+6, 37))])
+    keyboard.append([KeyboardButton("⏪ Annulla ultima"), KeyboardButton("✅ Analizza")])
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
 
 def get_win(chance, number):
     return number in CHANCES[chance]
@@ -66,16 +63,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "fiches_lost": 0,
         "input_sequence": []
     }
-
-    keyboard = []
-    for row in range(0, 37, 6):
-        keyboard.append([KeyboardButton(str(i)) for i in range(row, min(row+6, 37))])
-    keyboard.append([KeyboardButton("✅ Analizza")])
-
-    reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     await update.message.reply_text(
         "🎯 Inserisci i primi 15–20 numeri usciti, uno alla volta.\nQuando hai finito, premi ✅ Analizza.",
-        reply_markup=reply_markup
+        reply_markup=build_keyboard()
     )
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -96,45 +86,36 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data[user_id]["active_chances"] = suggestion
         user_data[user_id]["boxes"] = {ch: init_box() for ch in suggestion}
         user_data[user_id]["input_sequence"] = []
+        user_data[user_id]["history"].clear()
+        user_data[user_id]["turns"] = 0
+        user_data[user_id]["fiches_won"] = 0
+        user_data[user_id]["fiches_lost"] = 0
         suggerite = ", ".join(suggestion)
 
         await update.message.reply_text(
             f"📊 Analisi completata su {len(sequence)} numeri.\n"
             f"Chances suggerite: {suggerite}\n\nPuoi iniziare ora!",
-            reply_markup=ReplyKeyboardRemove()
+            reply_markup=build_keyboard()
         )
-        await update.message.reply_text("Clicca i numeri tramite i bottoni per giocare:", reply_markup=roulette_keyboard())
         return
 
-    if text.isdigit() and 0 <= int(text) <= 36:
-        user_data[user_id]["input_sequence"].append(int(text))
-        await update.message.reply_text(f"✅ Inserito: {text} ({len(user_data[user_id]['input_sequence'])} numeri finora)")
-    else:
-        await update.message.reply_text("Inserisci solo numeri da 0 a 36 o premi ✅ Analizza.")
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    user_id = query.from_user.id
-
-    if user_id not in user_data or not user_data[user_id]["active_chances"]:
-        await query.edit_message_text("Usa prima il comando /start e inserisci i numeri iniziali.")
-        return
-
-    data = query.data
-    if data == "undo":
+    if text == "⏪ Annulla ultima":
         if user_data[user_id]["history"]:
             last = user_data[user_id]["history"].pop()
-            user_data[user_id]["boxes"] = last["backup"]
+            user_data[user_id]["boxes"] = {k: v.copy() for k, v in last["backup"].items()}
             user_data[user_id]["turns"] -= 1
             user_data[user_id]["fiches_won"] -= last["won"]
             user_data[user_id]["fiches_lost"] -= last["lost"]
-            await query.edit_message_text("✅ Ultima operazione annullata.")
+            await update.message.reply_text("⏪ Ultima giocata annullata.", reply_markup=build_keyboard())
         else:
-            await query.edit_message_text("⚠️ Nessuna operazione da annullare.")
+            await update.message.reply_text("⚠️ Nessuna giocata da annullare.", reply_markup=build_keyboard())
         return
 
-    number = int(data)
+    if not text.isdigit() or not (0 <= int(text) <= 36):
+        await update.message.reply_text("Inserisci un numero da 0 a 36 oppure usa i pulsanti.")
+        return
+
+    number = int(text)
     backup = {ch: user_data[user_id]["boxes"][ch].copy() for ch in user_data[user_id]["active_chances"]}
     turn_won = 0
     turn_lost = 0
@@ -176,12 +157,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result += "\n\n🔜 Prossima puntata:"
     for ch in user_data[user_id]["active_chances"]:
         box = user_data[user_id]["boxes"][ch]
-        if not box:
-            box = init_box()
         prossima = box[0] + box[-1] if len(box) >= 2 else box[0] * 2
         result += f"\n- {ch}: {prossima} fiches"
 
-    await query.edit_message_text(result, reply_markup=roulette_keyboard())
+    await update.message.reply_text(result, reply_markup=build_keyboard())
 
 async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -194,13 +173,12 @@ async def reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "fiches_lost": 0,
         "input_sequence": []
     }
-    await update.message.reply_text("🔄 Sistema resettato.\nUsa /start per reiniziare.")
+    await update.message.reply_text("🔄 Sistema resettato.\nUsa /start per reiniziare.", reply_markup=build_keyboard())
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("reset", reset))
-    app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_input))
     app.run_polling()
 
