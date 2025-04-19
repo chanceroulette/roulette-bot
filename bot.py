@@ -4,8 +4,11 @@ import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")  # Ora gestito via variabile d’ambiente
-ADMIN_ID = None  # Quando ricevo il tuo ID, lo inseriamo qui
+# Usa il token dalla variabile d’ambiente
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
+# ID Telegram di Fabio (admin)
+ADMIN_ID = 5033904813
 
 admin_sessions = set()
 user_data_dir = "dati_utenti"
@@ -14,21 +17,21 @@ os.makedirs(user_data_dir, exist_ok=True)
 # /START
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Benvenuto in Chance Roulette!\nScrivi /menu per le opzioni disponibili."
+        "Benvenuto in Chance Roulette!\nScrivi /menu per iniziare."
     )
 
 # /HELP
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Benvenuto in Chance Roulette!\n\n"
-        "Questo bot ti aiuta a tracciare la tua strategia di gioco sulla roulette europea.\n"
-        "Comandi utili:\n"
-        "/menu - Mostra il menu\n"
-        "/report - Report sessione\n"
-        "/storico - Ultimi numeri inseriti\n"
-        "/annulla_ultima - Annulla ultima giocata\n"
-        "/id - Mostra il tuo ID Telegram\n\n"
-        "Per supporto: info@trilium-bg.com\n"
+        "Questo bot ti aiuta a seguire la strategia dei box sulle chances semplici della roulette europea.\n\n"
+        "Comandi disponibili:\n"
+        "/menu – Mostra i comandi principali\n"
+        "/report – Visualizza il report della sessione\n"
+        "/storico – Mostra gli ultimi numeri\n"
+        "/annulla_ultima – Annulla l’ultima giocata\n"
+        "/id – Mostra il tuo ID Telegram\n\n"
+        "Supporto: info@trilium-bg.com\n"
         "Copyright © 2025 Fabio Felice Cudia"
     )
 
@@ -37,32 +40,19 @@ async def mostra_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     await update.message.reply_text(f"Il tuo ID Telegram è: {user_id}")
 
-# /ADMIN
+# /ADMIN (solo per te)
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if ADMIN_ID is None or user_id != ADMIN_ID:
-        await update.message.reply_text("Comando non disponibile.")
+    if user_id != ADMIN_ID:
         return
-    await update.message.reply_text("Inserisci la password admin:")
-    context.user_data["attesa_password_admin"] = True
-
-# PASSWORD ADMIN
-async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if context.user_data.get("attesa_password_admin"):
-        if update.message.text.strip() == "@@Zaq12wsx@@25":
-            admin_sessions.add(user_id)
-            context.user_data["attesa_password_admin"] = False
-            await update.message.reply_text(
-                "Accesso admin effettuato.",
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("Utenti attivi", callback_data="admin_utenti")],
-                    [InlineKeyboardButton("Logout", callback_data="admin_logout")]
-                ])
-            )
-        else:
-            await update.message.reply_text("Password errata.")
-            context.user_data["attesa_password_admin"] = False
+    admin_sessions.add(user_id)
+    await update.message.reply_text(
+        "Accesso amministratore effettuato.",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("Utenti attivi", callback_data="admin_utenti")],
+            [InlineKeyboardButton("Logout", callback_data="admin_logout")]
+        ])
+    )
 
 # CALLBACK ADMIN
 async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -70,7 +60,7 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     await query.answer()
 
-    if user_id not in admin_sessions:
+    if user_id != ADMIN_ID or user_id not in admin_sessions:
         await query.edit_message_text("Non sei autorizzato.")
         return
 
@@ -86,11 +76,11 @@ async def admin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # /MENU
 async def menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "/report - Report attuale\n"
-        "/annulla_ultima - Annulla ultima\n"
-        "/storico - Mostra numeri usciti\n"
-        "/help - Aiuto\n"
-        "/id - Il tuo ID Telegram"
+        "/report – Report attuale\n"
+        "/annulla_ultima – Annulla ultima\n"
+        "/storico – Mostra numeri usciti\n"
+        "/help – Aiuto\n"
+        "/id – Il tuo ID Telegram"
     )
 
 # MAIN
@@ -103,7 +93,6 @@ def main():
     app.add_handler(CommandHandler("id", mostra_id))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CallbackQueryHandler(admin_callback))
-    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_password))
 
     app.run_polling()
 
