@@ -34,8 +34,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'bankroll': 0,
         'numeri': [],
         'attive': [],
+        'suggerite': [],
         'box': {chance: [1, 1, 1, 1] for chance in CHANCES.keys()},
-        'saldo': 0
+        'saldo': 0,
+        'storico': []
     }
     await update.message.reply_text(
         "Questo bot ti aiuta a tracciare la tua strategia alla roulette europea.\n"
@@ -51,7 +53,7 @@ async def set_bankroll(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data[user_id]['bankroll'] = bankroll
         await update.message.reply_text(
             f"Bankroll impostato a {bankroll} fiches.\n\n"
-            "Ora inserisci da 15 a 20 numeri usciti (dal più recente al più vecchio), uno alla volta.",
+            "Ora inserisci da 15 a 20 numeri estratti (dal più recente al più vecchio), uno alla volta.",
             reply_markup=number_keyboard
         )
         return INSERISCI_NUMERI
@@ -71,8 +73,10 @@ async def inserisci_numeri(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data[user_id]['numeri'].append(numero)
             count = len(user_data[user_id]['numeri'])
             await update.message.reply_text(f"Registrato {numero} ({count}/20)", reply_markup=number_keyboard)
-            if count >= 15:
+            if 15 <= count <= 20:
                 await update.message.reply_text("Hai inserito almeno 15 numeri. Quando sei pronto, digita /start_analisi.")
+            if count >= 20:
+                await update.message.reply_text("Hai inserito il massimo di 20 numeri. Ora usa /start_analisi.")
             return INSERISCI_NUMERI
         else:
             raise ValueError
@@ -90,12 +94,16 @@ async def start_analisi(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chance: sum(1 for n in numeri if n in CHANCES[chance]) for chance in CHANCES
     }
     max_freq = max(frequenze.values())
-    migliori = [c for c, v in frequenze.items() if v == max_freq]
-    user_data[user_id]['suggerite'] = migliori
+    suggerite = [c for c, v in frequenze.items() if v == max_freq]
+    user_data[user_id]['suggerite'] = suggerite
+    user_data[user_id]['attive'] = []
 
-    buttons = [[InlineKeyboardButton(text=chance, callback_data=chance)] for chance in CHANCES.keys()]
+    buttons = [[InlineKeyboardButton(text=chance, callback_data=chance)] for chance in CHANCES.keys()] + [
+        [InlineKeyboardButton("✅ Conferma", callback_data="conferma")]
+    ]
+
     await update.message.reply_text(
-        f"Chances consigliate: {', '.join(migliori)}\nSeleziona ora quali vuoi attivare:",
+        f"Chances consigliate: {', '.join(suggerite)}\nSeleziona ora quali vuoi attivare:",
         reply_markup=InlineKeyboardMarkup(buttons)
     )
     return SELEZIONA_CHANCES
@@ -104,19 +112,80 @@ async def seleziona_chances(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
-    chance = query.data
-    attive = user_data[user_id].setdefault('attive', [])
-    if chance in attive:
-        attive.remove(chance)
-    else:
-        attive.append(chance)
-    await query.edit_message_text(f"Chances attive: {', '.join(attive)}\nUsa /inizia_sessione per iniziare la strategia.")
+    data = query.data
+
+    if data == "conferma":
+        scelte = user_data[user_id]['attive']
+        await query.edit_message_text(f"Chances attivate: {', '.join(scelte)}\nOra usa /gioca <numero> per iniziare la sessione di gioco.")
+        return ConversationHandler.END
+
+    if data in CHANCES:
+        if data in user_data[user_id]['attive']:
+            user_data[user_id]['attive'].remove(data)
+        else:
+            user_data[user_id]['attive'].append(data)
+
+        buttons = [[InlineKeyboardButton(text=chance, callback_data=chance)] for chance in CHANCES.keys()] + [
+            [InlineKeyboardButton("✅ Conferma", callback_data="conferma")]
+        ]
+
+        await query.edit_message_text(
+            f"Chances consigliate: {', '.join(user_data[user_id]['suggerite'])}\nChances selezionate: {', '.join(user_data[user_id]['attive'])}\nSeleziona o conferma:",
+            reply_markup=InlineKeyboardMarkup(buttons)
+        )
+    return SELEZIONA_CHANCES
+
+async def gioca(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if user_id not in user_data or not user_data[user_id]['attive']:
+        await update.message.reply_text("Devi prima avviare una sessione con /start e selezionare le chances.")
+        return
+
+    try:
+        numero = int(context.args[0])
+        if not 0 <= numero <= 36:
+            raise ValueError
+    except:
+        await update.message.reply_text("Usa il comando così: /gioca 17")
+        return
+
+    risultato = f"🎯 Numero estratto: {numero}\n"
+    saldo = 0
+
+    for chance in user_data[user_id]['attive']:
+        box = user_data[user_id]['box'][chance]
+        if not box:
+            box = [1, 1, 1, 1]
+        puntata = box[0] if len(box) == 1 else box[0] + box[-1]
+        user_data[user_id]['bankroll'] -= puntata
+
+        if numero in CHANCES[chance]:
+            risultato += f"✅ {chance.upper()}: +{puntata}\n"
+            saldo += puntata
+            if len(box) > 1:
+                box = box[1:-1]
+            else:
+                box = []
+        else:
+            risultato += f"❌ {chance.upper()}: -{puntata}\n"
+            box.append(puntata)
+
+        if not box:
+            box = [1, 1, 1, 1]
+        user_data[user_id]['box'][chance] = box
+
+    user_data[user_id]['saldo'] += saldo
+    user_data[user_id]['bankroll'] += saldo
+    user_data[user_id]['storico'].append(numero)
+
+    risultato += f"\n💰 Bankroll attuale: {user_data[user_id]['bankroll']}\n📈 Saldo totale: {user_data[user_id]['saldo']}"
+    await update.message.reply_text(risultato)
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Per supporto: info@trilium-bg.com\n"
         "Copyright © 2025 Fabio Felice Cudia\n\n"
-        "Comandi utili:\n/start - inizializza sessione\n/start_analisi - dopo aver inserito i numeri\n/inizia_sessione - avvia la strategia\n/help - mostra questo messaggio"
+        "Comandi utili:\n/start - inizializza sessione\n/start_analisi - dopo aver inserito i numeri\n/gioca <numero> - gioca un nuovo numero\n/help - mostra questo messaggio"
     )
 
 async def show_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -143,6 +212,7 @@ if __name__ == '__main__':
 
     app.add_handler(conv_handler)
     app.add_handler(CommandHandler("start_analisi", start_analisi))
+    app.add_handler(CommandHandler("gioca", gioca))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("id", show_id))
     app.add_handler(CommandHandler("admin", admin))
