@@ -1,5 +1,5 @@
 import os
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -21,7 +21,6 @@ CHANCES = {
     "Manque": set(range(1, 19)),
     "Passe": set(range(19, 37)),
 }
-
 CHANCE_ORDER = ["Manque", "Pari", "Rosso", "Nero", "Dispari", "Passe"]
 user_data = {}
 user_ids = set()
@@ -63,7 +62,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "turns": 0,
         "fiches_won": 0,
         "fiches_lost": 0,
-        "input_sequence": []
+        "input_sequence": [],
+        "is_ready": False
     }
     await update.message.reply_text(
         "🎯 Inserisci i primi 15–20 numeri usciti, uno alla volta.\nQuando hai finito, premi ✅ Analizza.",
@@ -111,6 +111,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data[user_id]["turns"] = 0
         user_data[user_id]["fiches_won"] = 0
         user_data[user_id]["fiches_lost"] = 0
+        user_data[user_id]["is_ready"] = True
         await update.message.reply_text(
             f"📊 Analisi completata. Chances suggerite: {', '.join(suggestion)}.\nPuoi iniziare ora!",
             reply_markup=build_keyboard()
@@ -118,6 +119,9 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "⏪ Annulla ultima":
+        if not user_data[user_id]["is_ready"]:
+            await update.message.reply_text("⚠️ Non hai ancora iniziato a giocare.", reply_markup=build_keyboard())
+            return
         if user_data[user_id]["history"]:
             last = user_data[user_id]["history"].pop()
             user_data[user_id]["boxes"] = {k: v.copy() for k, v in last["backup"].items()}
@@ -133,11 +137,17 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Inserisci un numero valido (0–36) o premi ✅ Analizza.")
         return
 
+    number = int(text)
+
+    if not user_data[user_id]["is_ready"]:
+        user_data[user_id]["input_sequence"].append(number)
+        await update.message.reply_text(f"✅ Inserito: {number} ({len(user_data[user_id]['input_sequence'])} numeri finora)", reply_markup=build_keyboard())
+        return
+
     if not user_data[user_id]["active_chances"]:
         await update.message.reply_text("⚠️ Prima devi premere ✅ Analizza per attivare le chances.", reply_markup=build_keyboard())
         return
 
-    number = int(text)
     backup = {ch: user_data[user_id]["boxes"][ch].copy() for ch in user_data[user_id]["active_chances"]}
     turn_won = turn_lost = 0
     result = f"Hai selezionato il numero {number}\n\n"
@@ -171,7 +181,6 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result += f"\n💰 Vincite totali: {user_data[user_id]['fiches_won']} fiches"
     result += f"\n❌ Perdite totali: {user_data[user_id]['fiches_lost']} fiches"
     result += f"\n📊 Risultato netto: {netto:+} fiches"
-
     result += "\n\n🔜 Prossima puntata:"
     for ch in user_data[user_id]["active_chances"]:
         box = user_data[user_id]["boxes"][ch]
@@ -187,7 +196,6 @@ async def statistiche(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("❌ Accesso negato.")
         return
-
     msg = "📦 Stato attuale dei box:\n"
     for uid, data in user_data.items():
         netto = data["fiches_won"] - data["fiches_lost"]
