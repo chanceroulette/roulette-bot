@@ -22,6 +22,19 @@ CHANCES = {
     "Passe": set(range(19, 37)),
 }
 
+CHANCE_ORDER = ["Manque", "Pari", "Rosso", "Nero", "Dispari", "Passe"]
+
+def suggest_chances(numbers):
+    count = {chance: 0 for chance in CHANCE_ORDER}
+    for n in numbers:
+        for chance, values in CHANCES.items():
+            if n in values:
+                count[chance] += 1
+    sorted_by_least = sorted(count.items(), key=lambda x: x[1])
+    selected = [c[0] for c in sorted_by_least[:6]]
+    ordered_selection = [ch for ch in CHANCE_ORDER if ch in selected]
+    return ordered_selection[:max(2, len(ordered_selection))]
+
 def init_box():
     return [1, 1, 1, 1]
 
@@ -41,16 +54,6 @@ def get_win(chance, number):
 
 def format_box(box):
     return " | ".join(str(int(x)) for x in box)
-
-def suggest_chances(numbers):
-    count = {chance: 0 for chance in CHANCES}
-    for n in numbers:
-        for chance, values in CHANCES.items():
-            if n in values:
-                count[chance] += 1
-    sorted_chances = sorted(count.items(), key=lambda x: x[1])
-    suggestions = [c[0] for c in sorted_chances[:6]]
-    return suggestions[:max(2, min(6, len(suggestions)))]
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
