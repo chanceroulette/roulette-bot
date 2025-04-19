@@ -15,12 +15,12 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
     if user_id not in user_data:
-        await update.message.reply_text("Usa /start per iniziare.")
+        await update.message.reply_text("⚠️ Sessione non trovata. Usa /start per iniziare una nuova.")
         return
 
     state = user_data[user_id]
 
-    if state["pending_selection"] and text in ["Manque", "Pari", "Rosso", "Nero", "Dispari", "Passe"]:
+    if state.get("pending_selection") and text in ["Manque", "Pari", "Rosso", "Nero", "Dispari", "Passe"]:
         if text not in state["active_chances"]:
             state["active_chances"].append(text)
             await update.message.reply_text(f"✅ Aggiunta: {text}", reply_markup=build_chance_keyboard())
@@ -29,7 +29,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"❌ Rimossa: {text}", reply_markup=build_chance_keyboard())
         return
 
-    if state["pending_selection"] and text == "✅ Conferma":
+    if state.get("pending_selection") and text == "✅ Conferma":
         if len(state["active_chances"]) < 2:
             await update.message.reply_text("⚠️ Devi selezionare almeno 2 chances.")
             return
@@ -40,6 +40,9 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "✅ Analizza":
+        if not state.get("input_sequence"):
+            await update.message.reply_text("⚠️ Devi prima inserire almeno 10 numeri da analizzare.")
+            return
         if len(state["input_sequence"]) < 10:
             await update.message.reply_text("⚠️ Inserisci almeno 10 numeri prima di analizzare.")
             return
@@ -52,6 +55,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         state["fiches_won"] = 0
         state["fiches_lost"] = 0
         state["pending_selection"] = True
+        state["is_ready"] = False
         await update.message.reply_text(
             f"📊 Analisi sui numeri inseriti.\nChances consigliate: {', '.join(suggested)}.\n"
             "🔘 Seleziona le chances da attivare. Premi ✅ Conferma per iniziare.",
@@ -60,7 +64,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "⏪ Annulla ultima":
-        if not state["is_ready"]:
+        if not state.get("is_ready"):
             await update.message.reply_text("⚠️ Non hai ancora iniziato a giocare.")
             return
         if state["history"]:
@@ -80,7 +84,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     number = int(text)
 
-    if not state["is_ready"]:
+    if not state.get("is_ready"):
         state["input_sequence"].append(number)
         await update.message.reply_text(f"✅ Inserito: {number} ({len(state['input_sequence'])} numeri finora)", reply_markup=build_keyboard())
         return
@@ -107,7 +111,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             turn_won += puntata
         else:
             box.append(puntata)
-            state["boxes"][ch] = box  # Assicurati di riassegnare il box aggiornato
+            state["boxes"][ch] = box
             stato = format_box(box)
             result += f"❌ {ch}: perso {puntata} fiches — nuovo box: {stato}\n"
             turn_lost += puntata
