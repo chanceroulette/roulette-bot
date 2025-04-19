@@ -1,5 +1,5 @@
 import os
-from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, ReplyKeyboardRemove, KeyboardButton
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, filters,
     ConversationHandler, ContextTypes
@@ -9,8 +9,10 @@ from dotenv import load_dotenv
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
+ADMIN_ID = 5033904813
+
 # Stati della conversazione
-SET_BANKROLL, INSERISCI_PRIMI_15, INSERISCI_NUMERI = range(3)
+SET_BANKROLL, INSERISCI_PRIMI_15, SELEZIONA_CHANCES, INSERISCI_NUMERI = range(4)
 
 # Dizionari per gestire gli utenti
 user_data = {}
@@ -24,6 +26,12 @@ CHANCES = {
     'manque': list(range(1, 19)),
     'passe': list(range(19, 37))
 }
+
+# Tastiera numerica da 0 a 36
+number_keyboard = ReplyKeyboardMarkup(
+    [[str(n) for n in range(i, i+6)] for i in range(0, 37, 6)] + [["Annulla"]],
+    resize_keyboard=True
+)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
@@ -58,7 +66,7 @@ async def set_bankroll(update: Update, context: ContextTypes.DEFAULT_TYPE) -> in
 async def primi15(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     user_id = update.effective_user.id
     user_data[user_id]['numeri'] = []
-    await update.message.reply_text("Inserisci i primi 15 numeri iniziali UNO ALLA VOLTA:")
+    await update.message.reply_text("Inserisci i primi 15 numeri iniziali UNO ALLA VOLTA:", reply_markup=number_keyboard)
     return INSERISCI_PRIMI_15
 
 async def ricevi_primi15(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -69,7 +77,6 @@ async def ricevi_primi15(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             raise ValueError
         user_data[user_id]['numeri'].append(numero)
         if len(user_data[user_id]['numeri']) == 15:
-            # Calcolo frequenze
             numeri = user_data[user_id]['numeri']
             frequenze = {
                 chance: sum(1 for n in numeri if n in CHANCES[chance]) for chance in CHANCES
@@ -78,14 +85,18 @@ async def ricevi_primi15(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             user_data[user_id]['attive'] = consigliate
             await update.message.reply_text(
                 f"Statistiche completate. Chances consigliate: {', '.join(consigliate)}\n"
-                "Ora usa /modalita_inserimento"
+                "Ora usa /modalita_inserimento",
+                reply_markup=ReplyKeyboardRemove()
             )
             return ConversationHandler.END
         else:
-            await update.message.reply_text(f"Registrato {numero}. Ora {len(user_data[user_id]['numeri'])}/15:")
+            await update.message.reply_text(
+                f"Registrato {numero}. Ora {len(user_data[user_id]['numeri'])}/15:",
+                reply_markup=number_keyboard
+            )
             return INSERISCI_PRIMI_15
     except ValueError:
-        await update.message.reply_text("Inserisci un numero tra 0 e 36.")
+        await update.message.reply_text("Inserisci un numero tra 0 e 36.", reply_markup=number_keyboard)
         return INSERISCI_PRIMI_15
 
 # Comando /help
